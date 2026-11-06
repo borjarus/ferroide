@@ -31,7 +31,7 @@ use crate::{
 };
 
 /// Bumped when the persisted layout schema changes; older layouts are
-/// discarded instead of mis-restored.
+/// discarded instead of restored incorrectly.
 pub const LAYOUT_VERSION: usize = 1;
 
 const DOCK_PLACEMENTS: [DockPlacement; 3] = [

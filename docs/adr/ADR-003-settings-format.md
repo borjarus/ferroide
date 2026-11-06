@@ -32,7 +32,7 @@ FerroIDE stores three kinds of data with different owners and lifetimes:
 - Writes are atomic (temporary file + rename).
 - JSON Schema for settings (via `schemars`) and versioned migrations arrive
   in Stage 4. The layout file carries a version (`LAYOUT_VERSION`); a layout
-  from another version is discarded rather than mis-restored.
+  from another version is discarded rather than restored incorrectly.
 - `<config>` and `<data>` are the platform directories from the `dirs`
   crate (`%APPDATA%`/`%LOCALAPPDATA%` on Windows, `~/Library/Application
   Support` on macOS, XDG on Linux).
