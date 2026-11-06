@@ -1796,7 +1796,6 @@ dependencies = [
 name = "ferro"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ferro_i18n",
  "ferro_settings",
  "ferro_ui",
@@ -1828,7 +1827,6 @@ dependencies = [
 name = "ferro_perf"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ferro_ui",
  "gpui-kit",
  "memory-stats",
@@ -1865,7 +1863,6 @@ dependencies = [
 name = "ferro_storybook"
 version = "0.1.0"
 dependencies = [
- "ferro_i18n",
  "ferro_services",
  "ferro_settings",
  "ferro_ui",
@@ -1878,11 +1875,9 @@ dependencies = [
 name = "ferro_ui"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ferro_i18n",
  "ferro_settings",
  "gpui-kit",
- "serde",
  "serde_json",
 ]
 

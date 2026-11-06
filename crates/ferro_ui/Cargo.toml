@@ -9,8 +9,6 @@ publish.workspace = true
 
 [dependencies]
 gpui-kit.workspace = true
-anyhow.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 ferro_i18n.workspace = true
 ferro_settings.workspace = true

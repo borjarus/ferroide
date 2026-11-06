@@ -15,7 +15,6 @@ path = "src/main.rs"
 gpui-kit.workspace = true
 tracing-subscriber.workspace = true
 ferro_ui.workspace = true
-ferro_i18n.workspace = true
 ferro_settings.workspace = true
 ferro_services.workspace = true
 ferro_workspace.workspace = true
