@@ -45,14 +45,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-24.04
-          - os: windows-2025
-          - os: macos-15 # arm64
-          - os: macos-15-intel # x64, nightly only
-            nightly: true
+        # macos-15 is arm64; macos-15-intel (x64) runs only on nightly/manual runs.
+        # (`matrix` is not available in a job-level `if`, so the filtering happens here.)
+        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["ubuntu-24.04","windows-2025","macos-15","macos-15-intel"]' || '["ubuntu-24.04","windows-2025","macos-15"]') }}
     runs-on: ${{ matrix.os }}
-    if: ${{ !matrix.nightly || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
