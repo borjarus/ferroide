@@ -1,0 +1,9 @@
+/target
+/vendor
+**/*.rs.bk
+*.pdb
+.ferroide/
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

@@ -1,0 +1,6 @@
+[files]
+extend-exclude = ["Cargo.lock", "assets/locales/pl/*", "*.svg", "docs/FerroIDE_plan.md"]
+
+[default.extend-words]
+# Polish words and project names that are not typos.
+ferro = "ferro"

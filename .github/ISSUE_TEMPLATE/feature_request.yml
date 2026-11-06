@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest an improvement or a missing IntelliJ feature
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would it solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: If it mirrors an IntelliJ IDEA feature, name it and describe the workflow.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Workspace / UI, Editor, Languages (LSP), Search, VCS, Run / Debug, Extensions, Other]

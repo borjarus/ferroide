@@ -1,0 +1,45 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug", "triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Press …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: FerroIDE version
+      description: Help → About FerroIDE
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows 10/11, macOS (Apple Silicon), macOS (Intel), Linux (Wayland), Linux (X11)]
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: GPU and RAM
+      placeholder: e.g. Intel UHD 620, 8 GB
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Run with `RUST_LOG=debug` and paste the relevant part.
+      render: text

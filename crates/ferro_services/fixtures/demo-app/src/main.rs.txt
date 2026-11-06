@@ -1,0 +1,11 @@
+use anyhow::Result;
+use demo_app::{Config, greet};
+
+fn main() -> Result<()> {
+    let config = Config::load("demo.toml").unwrap_or_default();
+    for name in &config.names {
+        println!("{}", greet(name));
+    }
+    println!("Hello, FerroIDE");
+    Ok(())
+}

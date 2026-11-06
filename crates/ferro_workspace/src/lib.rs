@@ -1,0 +1,91 @@
+//! The FerroIDE workspace: windows, dock, tool windows, editor tabs,
+//! toolbar, status bar, menus, Find Action and the welcome screen.
+//!
+//! Views depend only on the service traits in `ferro_services`; in Stage 1
+//! every window runs on the mocks (see `docs/FerroIDE_plan.md`, §5.3).
+
+pub mod actions;
+pub mod app_state;
+mod chrome;
+mod dialogs;
+pub mod editor;
+mod find_action;
+pub mod menus;
+#[cfg(test)]
+mod tests;
+pub mod tool_window;
+pub mod tool_windows;
+pub mod welcome;
+pub mod workspace;
+
+use ferro_services::{Services, mock::MockConfig};
+use gpui_kit::{
+    AnyWindowHandle, App, AppContext as _, Bounds, Entity, Result, WindowBounds, WindowOptions,
+    component::TitleBar, px, size,
+};
+
+pub use app_state::AppState;
+pub use chrome::display_keystroke;
+pub use welcome::WelcomeScreen;
+pub use workspace::Workspace;
+
+use actions::*;
+
+/// Install application-level behavior. Call once after `gpui_kit::init`,
+/// `ferro_ui::init` and [`AppState::init`].
+pub fn init(cx: &mut App) {
+    cx.on_action(|_: &NewWindow, cx| log_err(open_welcome(cx)));
+    cx.on_action(|_: &ShowWelcome, cx| log_err(open_welcome(cx)));
+    cx.on_action(|_: &OpenProject, cx| log_err(open_workspace(mock_services(), cx)));
+    cx.on_action(|_: &NewProject, cx| log_err(open_workspace(mock_services(), cx)));
+    cx.on_action(|_: &GetFromVcs, cx| log_err(open_workspace(mock_services(), cx)));
+    cx.on_action(|_: &CloseProject, cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_, window, _| window.remove_window());
+        }
+        log_err(open_welcome(cx));
+    });
+}
+
+fn log_err<T>(result: Result<T>) {
+    if let Err(err) = result {
+        tracing::error!("{err:#}");
+    }
+}
+
+/// Mock services for a project opened in Stage 1.
+pub fn mock_services() -> Services {
+    Services::mock(MockConfig::default())
+}
+
+fn window_options(width: f32, height: f32, cx: &App) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+            None,
+            size(px(width), px(height)),
+            cx,
+        ))),
+        window_min_size: Some(size(px(640.), px(420.))),
+        ..TitleBar::window_options()
+    }
+}
+
+/// Open the welcome screen in its own window.
+pub fn open_welcome(cx: &mut App) -> Result<(AnyWindowHandle, Entity<WelcomeScreen>)> {
+    let recent = mock_services().recent;
+    gpui_kit::open_window(window_options(860., 560., cx), cx, move |window, cx| {
+        window.set_window_title("FerroIDE");
+        cx.new(|cx| WelcomeScreen::new(recent.as_ref(), window, cx))
+    })
+}
+
+/// Open a workspace window for a project.
+pub fn open_workspace(
+    services: Services,
+    cx: &mut App,
+) -> Result<(AnyWindowHandle, Entity<Workspace>)> {
+    gpui_kit::open_window(window_options(1400., 900., cx), cx, move |window, cx| {
+        window.set_window_title(&format!("{} — FerroIDE", services.project.name()));
+        Workspace::build(services, window, cx)
+    })
+}

@@ -1,0 +1,29 @@
+//! Library half of demo-app.
+
+mod config;
+
+pub use config::Config;
+
+/// Build a greeting for `name`.
+pub fn greet(name: &str) -> String {
+    if name.is_empty() {
+        "Hello, stranger!".to_string()
+    } else {
+        format!("Hello, {name}!")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn greets_by_name() {
+        assert_eq!(greet("Ada"), "Hello, Ada!");
+    }
+
+    #[test]
+    fn greets_strangers() {
+        assert_eq!(greet(""), "Hello, stranger!");
+    }
+}

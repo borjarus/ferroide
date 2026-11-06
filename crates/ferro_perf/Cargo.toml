@@ -1,0 +1,32 @@
+[package]
+name = "ferro_perf"
+description = "FerroIDE performance spikes, benchmarks and large-input generators"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui-kit = { workspace = true, features = ["tree-sitter-rust"] }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+mimalloc.workspace = true
+memory-stats = "1"
+ferro_ui.workspace = true
+
+[[bin]]
+name = "spike_list"
+path = "src/bin/spike_list.rs"
+
+[[bin]]
+name = "spike_editor"
+path = "src/bin/spike_editor.rs"
+
+[[bin]]
+name = "spike_dock"
+path = "src/bin/spike_dock.rs"
+
+[lints]
+workspace = true

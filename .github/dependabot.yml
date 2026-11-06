@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Bulk dependency updates every two weeks (plan §4.3). GPUI Kit is updated
+  # by hand once a quarter, in its own branch, with the performance suite.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      rust-dependencies:
+        patterns: ["*"]
+        exclude-patterns: ["gpui-kit"]
+    ignore:
+      - dependency-name: gpui-kit
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly

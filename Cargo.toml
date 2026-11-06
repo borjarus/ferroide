@@ -1,0 +1,77 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+default-members = ["crates/ferro"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/ferroide/ferroide"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+ferro_ui = { path = "crates/ferro_ui" }
+ferro_workspace = { path = "crates/ferro_workspace" }
+ferro_services = { path = "crates/ferro_services" }
+ferro_keymap = { path = "crates/ferro_keymap" }
+ferro_settings = { path = "crates/ferro_settings" }
+ferro_i18n = { path = "crates/ferro_i18n" }
+ferro_perf = { path = "crates/ferro_perf" }
+
+# Verified in November 2026 (see docs/adr/ADR-001-gui-framework.md):
+gpui-kit = "0.9"
+
+# Added via `cargo add` (latest stable), pinned in Cargo.lock:
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+futures = "0.3"
+async-channel = "2"
+smol = "2"
+rand = { version = "0.9", default-features = false, features = ["std", "small_rng"] }
+fluent-bundle = "0.16"
+unic-langid = { version = "0.9", features = ["macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+mimalloc = { version = "0.1", default-features = false }
+dirs = "6"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "deny"
+
+# Dependencies are optimized even in debug builds (GPUI in plain debug can be slow).
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only" # symbolication of crash reports
+split-debuginfo = "packed" # symbols in a separate file
+
+[profile.profiling]
+inherits = "release"
+debug = true
+
+# Release-grade code generation with faster builds, for spike measurements
+# and nightly performance runs. Shipped binaries use `release`.
+[profile.spike]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+debug = false
