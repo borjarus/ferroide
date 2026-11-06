@@ -8,6 +8,10 @@ all-features = false
 # RustSec advisory database.
 version = 2
 yanked = "deny"
+# Flag unmaintained crates only when we depend on them directly. The
+# transitive ones all come in through gpui and have no maintained
+# replacement we can choose. Vulnerabilities are still checked everywhere.
+unmaintained = "workspace"
 ignore = []
 
 [licenses]
