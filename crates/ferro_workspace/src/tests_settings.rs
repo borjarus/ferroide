@@ -16,6 +16,7 @@ use gpui_kit::{
 
 use crate::{
     AppState, app_state,
+    chrome::display_keystroke,
     dialogs::{clone_repo, new_file, rename, run_config},
     keymap_page::{ActionRow, KeymapPage, RecordBinding},
     settings_window::{self, SettingKey, SettingValue, SettingsPage, SettingsWindow},
@@ -104,6 +105,16 @@ fn keymap_page(cx: &mut TestAppContext, window: AnyWindowHandle) -> Entity<Keyma
 
 fn shortcut(cx: &mut TestAppContext, action: &str) -> Option<String> {
     cx.read(|cx| AppState::shortcut(action, cx))
+}
+
+/// A built-in shortcut as written for Windows/Linux, in the form the current
+/// platform uses: the macOS keymap variants replace `ctrl` with `cmd`.
+fn platform_keys(keys: &str) -> String {
+    if cfg!(target_os = "macos") {
+        keys.replace("ctrl", "cmd")
+    } else {
+        keys.to_string()
+    }
 }
 
 #[gpui_kit::test]
@@ -199,8 +210,8 @@ fn applying_language_and_scheme_takes_effect(cx: &mut TestAppContext) {
     });
     assert_eq!(applied_locale, ferro_i18n::Locale::Pl);
     assert_eq!(
-        shortcut(cx, "ferro::FindAction").as_deref(),
-        Some("ctrl-shift-a")
+        shortcut(cx, "ferro::FindAction"),
+        Some(platform_keys("ctrl-shift-a"))
     );
 }
 
@@ -344,7 +355,8 @@ fn the_keymap_page_searches_by_name_shortcut_and_pressed_keys(cx: &mut TestAppCo
 
     // By the displayed shortcut.
     on(cx, window, &page, |p, w, cx| {
-        p.set_query("ctrl+shift+p", w, cx)
+        let query = display_keystroke(&platform_keys("ctrl-shift-p")).to_lowercase();
+        p.set_query(&query, w, cx)
     });
     assert_eq!(ids(cx), vec!["ferro::CommandPalette".to_string()]);
 
@@ -352,7 +364,7 @@ fn the_keymap_page_searches_by_name_shortcut_and_pressed_keys(cx: &mut TestAppCo
     on(cx, window, &page, |p, w, cx| {
         p.set_query("", w, cx);
         p.set_recording(true, w, cx);
-        p.record("ctrl-k", cx);
+        p.record(&platform_keys("ctrl-k"), cx);
     });
     let found = ids(cx);
     for id in [
@@ -366,7 +378,9 @@ fn the_keymap_page_searches_by_name_shortcut_and_pressed_keys(cx: &mut TestAppCo
         );
     }
     assert!(!found.contains(&"ferro::QuickOpen".into()));
-    on(cx, window, &page, |p, _, cx| p.record("ctrl-s", cx));
+    on(cx, window, &page, |p, _, cx| {
+        p.record(&platform_keys("ctrl-s"), cx)
+    });
     assert_eq!(ids(cx), vec!["ferro::OpenKeymapSettings".to_string()]);
 }
 
@@ -378,7 +392,9 @@ fn recording_a_binding_warns_about_conflicts_and_saves(cx: &mut TestAppContext) 
             cx.new(|cx| RecordBinding::new("ferro::Run".into(), cx))
         })
         .unwrap();
-    on(cx, window, &record, |r, _, cx| r.record("ctrl-p", cx));
+    on(cx, window, &record, |r, _, cx| {
+        r.record(&platform_keys("ctrl-p"), cx)
+    });
     assert_eq!(
         cx.read(|cx| record.read(cx).conflicting_actions(cx)),
         vec!["ferro::QuickOpen".to_string()]
