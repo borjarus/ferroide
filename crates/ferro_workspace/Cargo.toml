@@ -14,6 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 memory-stats = "1"
+lsp-types = "0.97"
 ferro_ui.workspace = true
 ferro_i18n.workspace = true
 ferro_keymap.workspace = true
@@ -22,6 +23,7 @@ ferro_services.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+smol.workspace = true
 
 [lints]
 workspace = true

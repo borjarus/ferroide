@@ -6,6 +6,7 @@ pub use config::Config;
 
 /// Build a greeting for `name`.
 pub fn greet(name: &str) -> String {
+    // FIXME: handle names that are only whitespace
     if name.is_empty() {
         "Hello, stranger!".to_string()
     } else {

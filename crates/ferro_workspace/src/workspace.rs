@@ -1,7 +1,8 @@
-//! The IDE window: title bar with the main toolbar, tool-window stripes, the
-//! dock area (tool windows around the editor tabs) and the status bar.
+//! The IDE window in the Zed layout (plan §8, Stage 1): a slim title bar,
+//! the dock area — the editor panes with three docks around them (left,
+//! right, bottom) — and the status bar, whose icons toggle the dock panels.
 
-use std::{collections::HashMap, rc::Rc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
 
 use ferro_services::{Branch, RunConfiguration, RunEvent, RunState, Services, TaskProgress};
 use ferro_ui::tr;
@@ -16,7 +17,6 @@ use gpui_kit::{
             DockToggleEvent, InsertTarget, PaneRef, PanelId, PanelStyle, panel_handle,
             register_panel,
         },
-        menu::AppMenuBar,
         notification::Notification,
     },
     div, px,
@@ -25,14 +25,21 @@ use gpui_kit::{
 use crate::{
     actions::*,
     app_state::AppState,
-    editor::{EDITOR_PANEL_NAME, EditorEvent, EditorPanel, EditorTabState},
+    editor::{EDITOR_PANEL_NAME, EditorCommand, EditorEvent, EditorPanel, EditorTabState},
+    quick_open::QuickOpenMode,
+    requests::{OpenDiff, OpenLocation, OpenMerge, RevealInProject},
+    settings_window::SettingsPage,
     tool_window::{ToolWindowKind, ToolWindowPanel},
-    tool_windows::{OpenFile, ToolWindowBody},
 };
 
 /// Bumped when the persisted layout schema changes; older layouts are
 /// discarded instead of restored incorrectly.
-pub const LAYOUT_VERSION: usize = 1;
+///
+/// 2: the Zed layout — tool windows moved between docks.
+pub const LAYOUT_VERSION: usize = 2;
+
+/// How many places Back remembers.
+const NAV_HISTORY_LIMIT: usize = 100;
 
 const DOCK_PLACEMENTS: [DockPlacement; 3] = [
     DockPlacement::Left,
@@ -67,6 +74,7 @@ fn register_builders(cx: &mut App) {
         return;
     }
     cx.set_global(BuildersRegistered);
+    crate::vcs::register_panels(cx, services_for);
     for kind in ToolWindowKind::ALL {
         register_panel(cx, kind.id(), move |ctx, window, cx| {
             let services = services_for(ctx.dock_area().entity_id(), cx);
@@ -95,6 +103,13 @@ fn register_builders(cx: &mut App) {
     });
 }
 
+/// A place in the code Back and Forward return to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NavEntry {
+    pub path: PathBuf,
+    pub position: Option<ferro_services::TextPos>,
+}
+
 /// Mutable status-bar data fed by the services.
 #[derive(Default)]
 pub struct StatusData {
@@ -115,9 +130,13 @@ pub struct Workspace {
     pub(crate) editors: Vec<Entity<EditorPanel>>,
     pub(crate) active_editor: Option<WeakEntity<EditorPanel>>,
     last_tool_window: Option<ToolWindowKind>,
+    /// Paths of closed editor tabs, most recent last, for Reopen Closed Tab.
+    closed_tabs: Vec<PathBuf>,
     /// Docks closed by "Hide All Tool Windows", reopened by the next press.
     hidden_docks: Vec<DockPlacement>,
-    pub(crate) app_menu_bar: Entity<AppMenuBar>,
+    /// Back/Forward navigation history, most recent last.
+    nav_back: Vec<NavEntry>,
+    nav_forward: Vec<NavEntry>,
     pub(crate) status: StatusData,
     pub(crate) run_configs: Vec<RunConfiguration>,
     pub(crate) selected_run: usize,
@@ -132,6 +151,8 @@ impl Workspace {
         let (dock_area, skin) = DockSkin::dock_area("workspace", Some(LAYOUT_VERSION), window, cx);
         skin.set_panel_style(PanelStyle::TabBar, cx);
         skin.set_close_button_visible(true, cx);
+        // Docks are toggled from the status bar, not from the tab bars.
+        skin.set_toggle_button_visible(false, cx);
         cx.default_global::<WorkspaceServices>()
             .0
             .insert(dock_area.entity_id(), services.clone());
@@ -173,8 +194,10 @@ impl Workspace {
             editors: Vec::new(),
             active_editor: None,
             last_tool_window: None,
+            closed_tabs: Vec::new(),
             hidden_docks: Vec::new(),
-            app_menu_bar: AppMenuBar::new(cx),
+            nav_back: Vec::new(),
+            nav_forward: Vec::new(),
             status: StatusData::default(),
             selected_run: 0,
             run_state: RunState::Idle,
@@ -227,26 +250,43 @@ impl Workspace {
     fn adopt_tool_window(
         &mut self,
         panel: Entity<ToolWindowPanel>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let kind = panel.read(cx).kind();
-        if let ToolWindowBody::Project(tree) = panel.read(cx).body() {
-            let tree = tree.clone();
-            self._subscriptions.push(cx.subscribe_in(
-                &tree,
-                window,
-                |this, _, event: &OpenFile, window, cx| this.open_file(event.0.clone(), window, cx),
-            ));
-        }
         self.tool_windows.insert(kind, panel);
+    }
+
+    /// The body of a tool window as its concrete view, creating the tool
+    /// window if needed.
+    pub fn tool_window_body<T: 'static>(
+        &mut self,
+        kind: ToolWindowKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<T>> {
+        self.tool_window(kind, window, cx)
+            .read(cx)
+            .body()
+            .downcast::<T>()
     }
 
     fn adopt_editor(&mut self, editor: Entity<EditorPanel>, cx: &mut Context<Self>) {
         self._subscriptions.push(
             cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
                 match event {
-                    EditorEvent::Activated => this.mark_active_editor(&editor),
+                    EditorEvent::Activated => {
+                        // Switching tabs is a navigation Back returns from;
+                        // navigation through `open_location` has already
+                        // made the editor active and recorded itself.
+                        if this.active_editor_entity().as_ref() != Some(&editor)
+                            && let Some(from) = this.current_location(cx)
+                        {
+                            this.push_back(from);
+                        }
+                        this.mark_active_editor(&editor);
+                        crate::panels::structure::active_editor_changed(this, cx);
+                    }
                     EditorEvent::CursorMoved => {}
                 }
                 cx.notify();
@@ -295,7 +335,7 @@ impl Workspace {
             area.set_dock_size(DockPlacement::Left, px(280.), window, cx);
             area.set_dock_size(DockPlacement::Right, px(300.), window, cx);
             area.set_dock_size(DockPlacement::Bottom, px(220.), window, cx);
-            // IntelliJ opens with only the Project tool window visible.
+            // Like Zed, open with only the left dock (Project) visible.
             for placement in [DockPlacement::Bottom, DockPlacement::Right] {
                 if area.is_dock_open(placement) {
                     area.toggle_dock(placement, window, cx);
@@ -480,8 +520,8 @@ impl Workspace {
         open && self.is_active_in_group(id, placement, cx)
     }
 
-    /// IntelliJ stripe behavior: show (and focus) the tool window, or hide
-    /// it if it is already the visible one.
+    /// Status-bar toggle behavior (Zed): show (and focus) the tool window,
+    /// or close its dock if it is already the visible one.
     pub fn toggle_tool_window(
         &mut self,
         kind: ToolWindowKind,
@@ -521,6 +561,97 @@ impl Workspace {
                 }
             }
         }
+        self.hidden_docks.clear();
+        cx.notify();
+    }
+
+    /// Show (and focus) a tool window; unlike the toggle, never hides it.
+    pub fn show_tool_window(
+        &mut self,
+        kind: ToolWindowKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_tool_window_visible(kind, cx) {
+            self.toggle_tool_window(kind, window, cx);
+        } else if let Some(panel) = self.tool_windows.get(&kind) {
+            panel.focus_handle(cx).focus(window, cx);
+        }
+    }
+
+    /// Open or close a whole dock (VS Code/Zed: Ctrl+B, Ctrl+J, Ctrl+Alt+B).
+    pub fn toggle_dock(
+        &mut self,
+        placement: DockPlacement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let area = self.dock_area.clone();
+        let opening = !area.read(cx).is_dock_open(placement);
+        area.update(cx, |area, cx| area.toggle_dock(placement, window, cx));
+        if !opening {
+            self.focus_active_editor(window, cx);
+        }
+        self.hidden_docks.clear();
+        cx.notify();
+    }
+
+    /// The dock a tool window is in now, or the one it opens in.
+    pub fn tool_window_placement(&self, kind: ToolWindowKind, cx: &App) -> DockPlacement {
+        self.tool_windows
+            .get(&kind)
+            .and_then(|panel| self.placement_of(PanelId::from(panel.entity_id()), cx))
+            .unwrap_or_else(|| kind.default_placement())
+    }
+
+    /// Move a tool window to another dock ("Dock Left / Right / Bottom" on
+    /// its status-bar toggle) and show it there.
+    pub fn move_tool_window(
+        &mut self,
+        kind: ToolWindowKind,
+        to: DockPlacement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let panel = self.tool_window(kind, window, cx);
+        let id = PanelId::from(panel.entity_id());
+        let area = self.dock_area.clone();
+        if self.placement_of(id, cx) != Some(to) {
+            // A tab group in the target dock to join, if it has any panel.
+            let group = {
+                let area = area.read(cx);
+                area.layout(to).and_then(|tree| {
+                    let first = tree.panels().find(|p| *p != id)?;
+                    tree.find_panel_node(first)
+                })
+            };
+            area.update(cx, |area, cx| match group {
+                Some(node) => area.move_panel(
+                    id,
+                    InsertTarget::Tabs {
+                        node,
+                        ix: None,
+                        activate: true,
+                    },
+                    window,
+                    cx,
+                ),
+                None => {
+                    if area.panel(id).is_some() {
+                        area.remove_panel(panel.clone(), window, cx);
+                    }
+                    area.add_panel_view(panel_handle(panel.clone()), to, None, window, cx);
+                }
+            });
+        }
+        area.update(cx, |area, cx| {
+            area.select_panel(id, window, cx);
+            if !area.is_dock_open(to) {
+                area.toggle_dock(to, window, cx);
+            }
+        });
+        panel.focus_handle(cx).focus(window, cx);
+        self.last_tool_window = Some(kind);
         self.hidden_docks.clear();
         cx.notify();
     }
@@ -604,13 +735,40 @@ impl Workspace {
     }
 
     /// Open `path` in the active tab group, or show it if already open.
-    pub fn open_file(
+    pub fn open_file(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_location(&OpenLocation::file(path), window, cx);
+    }
+
+    /// Open a file at a position. A preview request replaces the current
+    /// preview tab instead of adding one (VS Code/Zed).
+    ///
+    /// A request that moves focus to the editor is a navigation: the place
+    /// it leaves is remembered for Back.
+    pub fn open_location(
         &mut self,
-        path: std::path::PathBuf,
+        location: &OpenLocation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if location.focus
+            && let Some(from) = self.current_location(cx)
+            && (from.path != location.path
+                || location.position.is_some_and(|p| Some(p) != from.position))
+        {
+            self.push_back(from);
+            self.nav_forward.clear();
+        }
+        self.open_location_inner(location, window, cx);
+    }
+
+    fn open_location_inner(
+        &mut self,
+        location: &OpenLocation,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let area = self.dock_area.clone();
+        let path = location.path.clone();
         if let Some(existing) = self
             .editors
             .iter()
@@ -620,12 +778,37 @@ impl Workspace {
             let id = PanelId::from(existing.entity_id());
             area.update(cx, |area, cx| area.select_panel(id, window, cx));
             self.mark_active_editor(&existing);
-            existing.focus_handle(cx).focus(window, cx);
+            if !location.preview {
+                existing.update(cx, |e, cx| e.set_preview(false, cx));
+            }
+            if let Some(position) = location.position {
+                existing.update(cx, |e, cx| e.go_to(position, window, cx));
+            }
+            if location.focus {
+                existing.focus_handle(cx).focus(window, cx);
+            }
             return;
+        }
+
+        // A new preview replaces the previous preview tab.
+        if location.preview
+            && let Some(old) = self
+                .editors
+                .iter()
+                .find(|e| e.read(cx).is_preview())
+                .cloned()
+        {
+            self.close_editor(&old, window, cx);
         }
 
         let group = self.active_group(cx);
         let editor = EditorPanel::open(path, false, &self.services, window, cx);
+        editor.update(cx, |e, cx| {
+            e.set_preview(location.preview, cx);
+            if let Some(position) = location.position {
+                e.go_to(position, window, cx);
+            }
+        });
         self.adopt_editor(editor.clone(), cx);
         let id = PanelId::from(editor.entity_id());
         area.update(cx, |area, cx| {
@@ -651,7 +834,102 @@ impl Workspace {
         });
         self.mark_active_editor(&editor);
         self.enforce_tab_limit(window, cx);
-        editor.focus_handle(cx).focus(window, cx);
+        if location.focus {
+            editor.focus_handle(cx).focus(window, cx);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Back / Forward
+    // -----------------------------------------------------------------------
+
+    /// The active editor's file and caret.
+    pub fn current_location(&self, cx: &App) -> Option<NavEntry> {
+        let editor = self.active_editor_entity()?;
+        let editor = editor.read(cx);
+        Some(NavEntry {
+            path: editor.path().to_path_buf(),
+            position: editor.caret(cx),
+        })
+    }
+
+    fn push_back(&mut self, entry: NavEntry) {
+        if self.nav_back.last() == Some(&entry) {
+            return;
+        }
+        self.nav_back.push(entry);
+        if self.nav_back.len() > NAV_HISTORY_LIMIT {
+            self.nav_back.remove(0);
+        }
+    }
+
+    pub fn can_go_back(&self) -> bool {
+        !self.nav_back.is_empty()
+    }
+
+    pub fn can_go_forward(&self) -> bool {
+        !self.nav_forward.is_empty()
+    }
+
+    /// Return to the previous place (VS Code: Alt+Left).
+    pub fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.nav_back.pop() else {
+            return;
+        };
+        if let Some(here) = self.current_location(cx) {
+            self.nav_forward.push(here);
+        }
+        self.navigate_to(target, window, cx);
+    }
+
+    /// Undo a Back (VS Code: Alt+Right).
+    pub fn go_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.nav_forward.pop() else {
+            return;
+        };
+        if let Some(here) = self.current_location(cx) {
+            self.push_back(here);
+        }
+        self.navigate_to(target, window, cx);
+    }
+
+    fn navigate_to(&mut self, target: NavEntry, window: &mut Window, cx: &mut Context<Self>) {
+        let mut location = OpenLocation::file(target.path);
+        location.position = target.position;
+        self.open_location_inner(&location, window, cx);
+        cx.notify();
+    }
+
+    /// Add any panel (diff, merge, …) as a tab of the active editor group.
+    pub fn add_center_panel<P: gpui_kit::component::dock::Panel>(
+        &mut self,
+        panel: Entity<P>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let group = self.active_group(cx);
+        let id = PanelId::from(panel.entity_id());
+        self.dock_area.update(cx, |area, cx| {
+            area.add_panel_view(panel_handle(panel), DockPlacement::Center, None, window, cx);
+            if let Some(node) = group {
+                area.move_panel(
+                    id,
+                    InsertTarget::Tabs {
+                        node,
+                        ix: None,
+                        activate: true,
+                    },
+                    window,
+                    cx,
+                );
+            }
+        });
+    }
+
+    pub(crate) fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self.closed_tabs.pop() {
+            self.open_file(path, window, cx);
+        }
     }
 
     /// Close the least recently used unpinned tabs above the limit.
@@ -686,6 +964,12 @@ impl Workspace {
             return;
         }
         let editor = editor.clone();
+        let path = editor.read(cx).path().to_path_buf();
+        self.closed_tabs.retain(|p| *p != path);
+        self.closed_tabs.push(path);
+        if self.closed_tabs.len() > 50 {
+            self.closed_tabs.remove(0);
+        }
         self.dock_area
             .update(cx, |area, cx| area.remove_panel(editor.clone(), window, cx));
         self.editors.retain(|e| *e != editor);
@@ -951,11 +1235,58 @@ impl Workspace {
         }
     }
 
+    /// Re-read the run configurations after they were edited.
+    pub(crate) fn reload_run_configs(&mut self, cx: &mut Context<Self>) {
+        let selected = self
+            .run_configs
+            .get(self.selected_run)
+            .map(|c| c.id.clone());
+        self.run_configs = self.services.run.configurations();
+        self.selected_run = selected
+            .and_then(|id| self.run_configs.iter().position(|c| c.id == id))
+            .unwrap_or(0)
+            .min(self.run_configs.len().saturating_sub(1));
+        if let Some(config) = self.run_configs.get(self.selected_run) {
+            self.run_state = self.services.run.state(&config.id);
+        }
+        cx.notify();
+    }
+
     pub(crate) fn stop_run(&mut self, cx: &mut Context<Self>) {
         if let Some(config) = self.run_configs.get(self.selected_run) {
             self.services.run.stop(&config.id);
         }
         cx.notify();
+    }
+
+    /// Select `path` in the Project tool window, showing it first.
+    pub fn reveal_in_project(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_tool_window(ToolWindowKind::Project, window, cx);
+        if let Some(tree) = self.tool_window_body::<crate::panels::project::ProjectTree>(
+            ToolWindowKind::Project,
+            window,
+            cx,
+        ) {
+            tree.update(cx, |tree, cx| tree.reveal(path, cx));
+        }
+    }
+
+    /// Run an editor command on the active editor.
+    pub fn editor_command(
+        &mut self,
+        command: EditorCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(editor) = self.active_editor_entity() {
+            let services = self.services.clone();
+            editor.update(cx, |e, cx| e.run_command(command, &services, window, cx));
+        }
     }
 
     pub(crate) fn notify_info(&self, key: &str, window: &mut Window, cx: &mut App) {
@@ -980,14 +1311,129 @@ impl Render for Workspace {
             .id("workspace")
             .key_context(context)
             .track_focus(&self.focus_handle)
+            .on_modifiers_changed(cx.listener(crate::quick_open::on_modifiers_changed))
+            .capture_key_down(
+                cx.listener(|this, event, _, cx| crate::quick_open::on_key_down(this, event, cx)),
+            )
             .on_action(cx.listener(|this, _: &FindAction, window, cx| {
-                crate::find_action::open(this, window, cx)
+                crate::quick_open::open(this, QuickOpenMode::Commands, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &CommandPalette, window, cx| {
+                crate::quick_open::open(this, QuickOpenMode::Commands, window, cx)
             }))
             .on_action(cx.listener(|this, _: &SearchEverywhere, window, cx| {
-                crate::find_action::open(this, window, cx)
+                crate::quick_open::open(this, QuickOpenMode::Files, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &QuickOpen, window, cx| {
+                crate::quick_open::open(this, QuickOpenMode::Files, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &GoToSymbolInFile, window, cx| {
+                crate::quick_open::open(this, QuickOpenMode::SymbolsInFile, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &GoToSymbolInWorkspace, window, cx| {
+                crate::quick_open::open(this, QuickOpenMode::SymbolsInWorkspace, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &GoToLine, window, cx| {
+                crate::quick_open::open(this, QuickOpenMode::GoToLine, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &FindInFiles, window, cx| {
+                crate::find_in_files::open(this, false, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ReplaceInFiles, window, cx| {
+                crate::find_in_files::open(this, true, window, cx)
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
-                crate::dialogs::open_settings(this, window, cx)
+                crate::settings_window::open(this, SettingsPage::Appearance, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &OpenKeymapSettings, window, cx| {
+                crate::settings_window::open(this, SettingsPage::Keymap, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &OpenSettingsFile, window, cx| {
+                crate::settings_window::open_settings_file(this, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &NewFile, window, cx| {
+                crate::dialogs::new_file::open(this, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &EditRunConfigurations, window, cx| {
+                crate::dialogs::run_config::open(this, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &RenameSymbol, window, cx| {
+                crate::dialogs::rename::open(this, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowDiff, window, cx| {
+                let path = this
+                    .active_editor_entity()
+                    .map(|e| e.read(cx).path().to_path_buf());
+                match path {
+                    Some(path) => crate::vcs::diff_view::open(this, path, window, cx),
+                    None => this.notify_info("feature-coming-soon", window, cx),
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ResolveConflicts, window, cx| {
+                crate::vcs::merge_view::open(this, None, window, cx)
+            }))
+            .on_action(cx.listener(|this, request: &OpenLocation, window, cx| {
+                this.open_location(request, window, cx)
+            }))
+            .on_action(cx.listener(|this, request: &OpenDiff, window, cx| {
+                crate::vcs::diff_view::open(this, request.path.clone(), window, cx)
+            }))
+            .on_action(cx.listener(|this, request: &OpenMerge, window, cx| {
+                crate::vcs::merge_view::open(this, Some(request.path.clone()), window, cx)
+            }))
+            .on_action(cx.listener(|this, request: &RevealInProject, window, cx| {
+                this.reveal_in_project(request.path.clone(), window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &SelectOpenedFile, window, cx| {
+                let path = this
+                    .active_editor_entity()
+                    .map(|e| e.read(cx).path().to_path_buf());
+                if let Some(path) = path {
+                    this.reveal_in_project(path, window, cx)
+                }
+            }))
+            .on_action(cx.listener(|this, _: &TriggerCompletion, window, cx| {
+                this.editor_command(EditorCommand::TriggerCompletion, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &QuickFix, window, cx| {
+                this.editor_command(EditorCommand::QuickFix, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &QuickDocumentation, window, cx| {
+                this.editor_command(EditorCommand::QuickDocumentation, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ParameterInfo, window, cx| {
+                this.editor_command(EditorCommand::ParameterInfo, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleBreakpoint, window, cx| {
+                this.editor_command(EditorCommand::ToggleBreakpoint, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &NextProblem, window, cx| {
+                this.editor_command(EditorCommand::NextProblem, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &PreviousProblem, window, cx| {
+                this.editor_command(EditorCommand::PreviousProblem, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
+                this.toggle_dock(DockPlacement::Left, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleBottomDock, window, cx| {
+                this.toggle_dock(DockPlacement::Bottom, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleRightDock, window, cx| {
+                this.toggle_dock(DockPlacement::Right, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleServices, window, cx| {
+                this.toggle_tool_window(ToolWindowKind::Services, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &NewTerminal, window, cx| {
+                this.services.terminal.new_session();
+                this.show_tool_window(ToolWindowKind::Terminal, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ReopenClosedTab, window, cx| {
+                this.reopen_closed_tab(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &GetFromVcs, window, cx| {
+                crate::dialogs::clone_repo::open(this, window, cx)
             }))
             .on_action(cx.listener(|this, _: &About, window, cx| {
                 crate::dialogs::open_about(this, window, cx)
@@ -1037,6 +1483,8 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &ToggleBuild, window, cx| {
                 this.toggle_tool_window(ToolWindowKind::Build, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &GoBack, window, cx| this.go_back(window, cx)))
+            .on_action(cx.listener(|this, _: &GoForward, window, cx| this.go_forward(window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_tab(window, cx)))
             .on_action(
                 cx.listener(|this, _: &CloseOtherTabs, window, cx| {
@@ -1070,19 +1518,10 @@ impl Render for Workspace {
             .child(self.render_title_bar(window, cx))
             .child(
                 div()
-                    .flex()
-                    .flex_row()
                     .flex_1()
                     .min_h_0()
-                    .child(self.render_stripe(crate::tool_window::StripeSlot::LeftTop, window, cx))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .child(self.dock_area.clone()),
-                    )
-                    .child(self.render_stripe(crate::tool_window::StripeSlot::Right, window, cx)),
+                    .w_full()
+                    .child(self.dock_area.clone()),
             )
             .child(self.render_status_bar(window, cx))
     }

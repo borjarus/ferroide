@@ -1821,6 +1821,7 @@ name = "ferro_keymap"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1892,9 +1893,11 @@ dependencies = [
  "ferro_settings",
  "ferro_ui",
  "gpui-kit",
+ "lsp-types",
  "memory-stats",
  "serde",
  "serde_json",
+ "smol",
  "tracing",
 ]
 

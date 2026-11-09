@@ -1,9 +1,9 @@
 //! Tool windows: the panels around the editor (Project, Commit, Terminal, …).
 //!
 //! Each tool window is a dock panel, so it can be dragged between the left,
-//! right and bottom docks, zoomed, and persisted with the layout. In Stage 1
-//! their contents come from mock services; Stage 2 replaces each body with
-//! the full component.
+//! right and bottom docks, zoomed, and persisted with the layout. Since
+//! Stage 2 every body is a full component on mock services (see `panels`
+//! and `vcs`).
 
 use ferro_services::Services;
 use ferro_ui::{FerroIcon, tr};
@@ -18,7 +18,7 @@ use gpui_kit::{
     div,
 };
 
-use crate::tool_windows::{self, ToolWindowBody};
+use crate::panels::{self, ToolWindowBody};
 
 /// Every tool window FerroIDE has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -35,30 +35,26 @@ pub enum ToolWindowKind {
     Notifications,
     Database,
     Build,
-}
-
-/// Which stripe and group a tool window's button sits in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StripeSlot {
-    LeftTop,
-    LeftBottom,
-    Right,
+    Services,
 }
 
 impl ToolWindowKind {
-    pub const ALL: [ToolWindowKind; 12] = [
+    /// In status-bar order: within each dock, the toggles appear in this
+    /// order.
+    pub const ALL: [ToolWindowKind; 13] = [
         ToolWindowKind::Project,
         ToolWindowKind::Commit,
+        ToolWindowKind::Git,
         ToolWindowKind::Structure,
+        ToolWindowKind::Database,
+        ToolWindowKind::Terminal,
         ToolWindowKind::Run,
         ToolWindowKind::Debug,
         ToolWindowKind::Problems,
-        ToolWindowKind::Git,
-        ToolWindowKind::Terminal,
         ToolWindowKind::Todo,
-        ToolWindowKind::Notifications,
-        ToolWindowKind::Database,
         ToolWindowKind::Build,
+        ToolWindowKind::Services,
+        ToolWindowKind::Notifications,
     ];
 
     /// Stable id: the dock's panel name, the persisted key and the element id.
@@ -76,6 +72,7 @@ impl ToolWindowKind {
             Self::Notifications => "ferro.tool.notifications",
             Self::Database => "ferro.tool.database",
             Self::Build => "ferro.tool.build",
+            Self::Services => "ferro.tool.services",
         }
     }
 
@@ -97,6 +94,7 @@ impl ToolWindowKind {
             Self::Notifications => "tool-notifications",
             Self::Database => "tool-database",
             Self::Build => "tool-build",
+            Self::Services => "tool-services",
         }
     }
 
@@ -118,6 +116,7 @@ impl ToolWindowKind {
             Self::Notifications => FerroIcon::Notifications,
             Self::Database => FerroIcon::Database,
             Self::Build => FerroIcon::Build,
+            Self::Services => FerroIcon::Services,
         }
     }
 
@@ -136,25 +135,28 @@ impl ToolWindowKind {
             Self::Notifications => "ferro::ToggleNotifications",
             Self::Database => "ferro::ToggleDatabase",
             Self::Build => "ferro::ToggleBuild",
+            Self::Services => "ferro::ToggleServices",
         }
     }
 
-    pub fn stripe(self) -> StripeSlot {
-        match self {
-            Self::Project | Self::Commit | Self::Structure => StripeSlot::LeftTop,
-            Self::Run | Self::Debug | Self::Problems | Self::Git | Self::Terminal | Self::Todo => {
-                StripeSlot::LeftBottom
-            }
-            Self::Notifications | Self::Database | Self::Build => StripeSlot::Right,
-        }
-    }
-
-    /// Where the tool window docks by default.
+    /// Where the tool window docks by default (the Zed model, plan §8
+    /// Stage 1): left — Project, Git/Commit, Outline/Structure, Database;
+    /// bottom — Terminal, Run, Debug, Problems, TODO, Build, Services;
+    /// right — Notifications. The user can move it to another dock from its
+    /// status-bar toggle; the layout remembers that.
     pub fn default_placement(self) -> DockPlacement {
-        match self.stripe() {
-            StripeSlot::LeftTop => DockPlacement::Left,
-            StripeSlot::LeftBottom => DockPlacement::Bottom,
-            StripeSlot::Right => DockPlacement::Right,
+        match self {
+            Self::Project | Self::Commit | Self::Git | Self::Structure | Self::Database => {
+                DockPlacement::Left
+            }
+            Self::Terminal
+            | Self::Run
+            | Self::Debug
+            | Self::Problems
+            | Self::Todo
+            | Self::Build
+            | Self::Services => DockPlacement::Bottom,
+            Self::Notifications => DockPlacement::Right,
         }
     }
 }
@@ -176,7 +178,7 @@ impl ToolWindowPanel {
         Self {
             kind,
             focus_handle: cx.focus_handle(),
-            body: tool_windows::build(kind, services, window, cx),
+            body: panels::build(kind, services, window, cx),
         }
     }
 
@@ -203,8 +205,8 @@ impl BasePanel for ToolWindowPanel {
         self.kind.id()
     }
 
-    /// Tool windows are hidden with their stripe button, never closed from
-    /// the tab bar, as in IntelliJ.
+    /// Tool windows are hidden with their status-bar toggle, never closed
+    /// from the tab bar, as in Zed.
     fn closable(&self, _: &App) -> bool {
         false
     }
@@ -241,8 +243,10 @@ impl Panel for ToolWindowPanel {
 impl EventEmitter<PanelEvent> for ToolWindowPanel {}
 
 impl Focusable for ToolWindowPanel {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.body
+            .focus_handle(cx)
+            .unwrap_or_else(|| self.focus_handle.clone())
     }
 }
 
@@ -253,6 +257,6 @@ impl Render for ToolWindowPanel {
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().muted)
-            .child(self.body.element())
+            .child(self.body.view().clone())
     }
 }

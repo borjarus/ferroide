@@ -1,7 +1,7 @@
 //! Localization for FerroIDE, built on [Project Fluent](https://projectfluent.org).
 //!
-//! Translations live in `assets/locales/<lang>/ferro.ftl` and are embedded in
-//! the binary. The active locale is process-global: every window shows the
+//! Translations live in `assets/locales/<lang>/*.ftl` — one file per area
+//! of the UI (see [`FILES`]) — and are embedded in the binary. The active locale is process-global: every window shows the
 //! same language, and switching it takes effect on the next frame.
 //!
 //! ```
@@ -19,8 +19,19 @@ use fluent_bundle::{FluentArgs, FluentResource, FluentValue, concurrent::FluentB
 use serde::{Deserialize, Serialize};
 use unic_langid::{LanguageIdentifier, langid};
 
-const EN_FTL: &str = include_str!("../../../assets/locales/en/ferro.ftl");
-const PL_FTL: &str = include_str!("../../../assets/locales/pl/ferro.ftl");
+/// Embed `assets/locales/<lang>/<name>.ftl` for both languages.
+macro_rules! ftl_files {
+    ($($name:literal),* $(,)?) => {
+        /// The catalog files of every locale, in load order.
+        pub const FILES: &[&str] = &[$($name),*];
+        const EN_FTL: &[&str] = &[$(include_str!(concat!("../../../assets/locales/en/", $name, ".ftl"))),*];
+        const PL_FTL: &[&str] = &[$(include_str!(concat!("../../../assets/locales/pl/", $name, ".ftl"))),*];
+    };
+}
+
+ftl_files!(
+    "ferro", "editor", "search", "panels", "vcs", "settings", "dialogs"
+);
 
 /// A language FerroIDE ships translations for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -81,7 +92,7 @@ impl Locale {
         }
     }
 
-    fn source(self) -> &'static str {
+    fn sources(self) -> &'static [&'static str] {
         match self {
             Locale::En => EN_FTL,
             Locale::Pl => PL_FTL,
@@ -96,14 +107,20 @@ struct Catalog {
 }
 
 fn bundle(locale: Locale) -> FluentBundle<FluentResource> {
-    let resource = FluentResource::try_new(locale.source().to_string())
-        .unwrap_or_else(|(_, errors)| panic!("invalid FTL for {}: {errors:?}", locale.code()));
     let mut bundle = FluentBundle::new_concurrent(vec![locale.langid()]);
     // Bidi isolation marks render as boxes in many UI fonts.
     bundle.set_use_isolating(false);
-    bundle
-        .add_resource(resource)
-        .unwrap_or_else(|errors| panic!("duplicate FTL ids for {}: {errors:?}", locale.code()));
+    for (name, source) in FILES.iter().zip(locale.sources()) {
+        let resource = FluentResource::try_new(source.to_string()).unwrap_or_else(|(_, errors)| {
+            panic!("invalid FTL in {}/{name}.ftl: {errors:?}", locale.code())
+        });
+        bundle.add_resource(resource).unwrap_or_else(|errors| {
+            panic!(
+                "duplicate FTL ids in {}/{name}.ftl: {errors:?}",
+                locale.code()
+            )
+        });
+    }
     bundle
 }
 
@@ -193,13 +210,21 @@ fn format(key: &str, args: Option<&FluentArgs>) -> String {
 /// Message ids defined for `locale`, sorted. Used by tests and tooling to keep
 /// the catalogs in sync.
 pub fn message_ids(locale: Locale) -> Vec<String> {
-    let resource =
-        FluentResource::try_new(locale.source().to_string()).unwrap_or_else(|(res, _)| res);
-    let mut ids: Vec<String> = resource
-        .entries()
-        .filter_map(|entry| match entry {
-            fluent_syntax::ast::Entry::Message(message) => Some(message.id.name.to_string()),
-            _ => None,
+    let mut ids: Vec<String> = locale
+        .sources()
+        .iter()
+        .flat_map(|source| {
+            let resource =
+                FluentResource::try_new(source.to_string()).unwrap_or_else(|(res, _)| res);
+            resource
+                .entries()
+                .filter_map(|entry| match entry {
+                    fluent_syntax::ast::Entry::Message(message) => {
+                        Some(message.id.name.to_string())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
         })
         .collect();
     ids.sort();
@@ -213,8 +238,12 @@ mod tests {
     #[test]
     fn catalogs_parse_without_errors() {
         for locale in Locale::ALL {
-            FluentResource::try_new(locale.source().to_string())
-                .unwrap_or_else(|(_, e)| panic!("{}: {e:?}", locale.code()));
+            for (name, source) in FILES.iter().zip(locale.sources()) {
+                FluentResource::try_new(source.to_string())
+                    .unwrap_or_else(|(_, e)| panic!("{}/{name}: {e:?}", locale.code()));
+            }
+            // Duplicate ids across files panic here.
+            let _ = bundle(locale);
         }
     }
 

@@ -87,7 +87,7 @@ fn every_catalog_action_is_a_registered_gpui_action(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn default_layout_matches_intellij(cx: &mut TestAppContext) {
+fn default_layout_follows_zed(cx: &mut TestAppContext) {
     let (_, ws) = open(cx);
     assert!(visible(cx, &ws, ToolWindowKind::Project));
     assert!(!visible(cx, &ws, ToolWindowKind::Terminal));
@@ -99,10 +99,10 @@ fn default_layout_matches_intellij(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn stripe_toggles_hide_show_and_switch_tool_windows(cx: &mut TestAppContext) {
+fn status_bar_toggles_hide_show_and_switch_tool_windows(cx: &mut TestAppContext) {
     let (window, ws) = open(cx);
 
-    // Project is visible: its stripe hides it, and shows it again.
+    // Project is visible: its toggle hides it, and shows it again.
     with(cx, window, &ws, |ws, w, cx| {
         ws.toggle_tool_window(ToolWindowKind::Project, w, cx)
     });
@@ -129,19 +129,104 @@ fn stripe_toggles_hide_show_and_switch_tool_windows(cx: &mut TestAppContext) {
     });
     assert!(!dock_open(cx, &ws, DockPlacement::Bottom));
 
-    // A right-side tool window.
+    // A right-dock tool window.
     with(cx, window, &ws, |ws, w, cx| {
-        ws.toggle_tool_window(ToolWindowKind::Database, w, cx)
+        ws.toggle_tool_window(ToolWindowKind::Notifications, w, cx)
     });
     assert!(dock_open(cx, &ws, DockPlacement::Right));
-    assert!(visible(cx, &ws, ToolWindowKind::Database));
+    assert!(visible(cx, &ws, ToolWindowKind::Notifications));
+}
+
+#[gpui_kit::test]
+fn panels_sit_in_the_zed_docks_and_can_move(cx: &mut TestAppContext) {
+    let (window, ws) = open(cx);
+    let placement =
+        |cx: &mut TestAppContext, kind| cx.read(|cx| ws.read(cx).tool_window_placement(kind, cx));
+    for (kind, dock) in [
+        (ToolWindowKind::Project, DockPlacement::Left),
+        (ToolWindowKind::Commit, DockPlacement::Left),
+        (ToolWindowKind::Structure, DockPlacement::Left),
+        (ToolWindowKind::Database, DockPlacement::Left),
+        (ToolWindowKind::Terminal, DockPlacement::Bottom),
+        (ToolWindowKind::Problems, DockPlacement::Bottom),
+        (ToolWindowKind::Notifications, DockPlacement::Right),
+    ] {
+        assert_eq!(placement(cx, kind), dock, "{kind:?}");
+    }
+
+    // "Dock Right" on Structure's toggle: it moves, opens and stays toggleable.
+    with(cx, window, &ws, |ws, w, cx| {
+        ws.move_tool_window(ToolWindowKind::Structure, DockPlacement::Right, w, cx)
+    });
+    assert_eq!(
+        placement(cx, ToolWindowKind::Structure),
+        DockPlacement::Right
+    );
+    assert!(visible(cx, &ws, ToolWindowKind::Structure));
+    assert!(dock_open(cx, &ws, DockPlacement::Right));
+    with(cx, window, &ws, |ws, w, cx| {
+        ws.toggle_tool_window(ToolWindowKind::Structure, w, cx)
+    });
+    assert!(!dock_open(cx, &ws, DockPlacement::Right));
+
+    // Into a dock whose only panel is the one moving away, and back.
+    with(cx, window, &ws, |ws, w, cx| {
+        ws.move_tool_window(ToolWindowKind::Notifications, DockPlacement::Bottom, w, cx)
+    });
+    assert_eq!(
+        placement(cx, ToolWindowKind::Notifications),
+        DockPlacement::Bottom
+    );
+    assert!(visible(cx, &ws, ToolWindowKind::Notifications));
+
+    // The other panels of the left dock are untouched.
+    assert_eq!(placement(cx, ToolWindowKind::Project), DockPlacement::Left);
+    assert!(visible(cx, &ws, ToolWindowKind::Project));
+}
+
+#[gpui_kit::test]
+fn back_and_forward_retrace_navigation(cx: &mut TestAppContext) {
+    let (window, ws) = open(cx);
+    let root = cx.read(|cx| ws.read(cx).services.project.roots()[0].clone());
+    let active = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            ws.read(cx)
+                .active_editor_entity()
+                .map(|e| e.read(cx).file_name().to_string())
+        })
+    };
+    let start = active(cx);
+    assert!(cx.read(|cx| !ws.read(cx).can_go_back()));
+
+    with(cx, window, &ws, |ws, w, cx| {
+        ws.open_file(root.join("README.md"), w, cx)
+    });
+    with(cx, window, &ws, |ws, w, cx| {
+        ws.open_file(root.join("src/config.rs"), w, cx)
+    });
+    assert_eq!(active(cx).as_deref(), Some("config.rs"));
+
+    with(cx, window, &ws, |ws, w, cx| ws.go_back(w, cx));
+    assert_eq!(active(cx).as_deref(), Some("README.md"));
+    with(cx, window, &ws, |ws, w, cx| ws.go_back(w, cx));
+    assert_eq!(active(cx), start);
+    assert!(cx.read(|cx| ws.read(cx).can_go_forward()));
+
+    with(cx, window, &ws, |ws, w, cx| ws.go_forward(w, cx));
+    assert_eq!(active(cx).as_deref(), Some("README.md"));
+
+    // A new navigation drops the forward history.
+    with(cx, window, &ws, |ws, w, cx| {
+        ws.open_file(root.join("tests/smoke.rs"), w, cx)
+    });
+    assert!(cx.read(|cx| !ws.read(cx).can_go_forward()));
 }
 
 #[gpui_kit::test]
 fn hide_all_tool_windows_restores_what_it_hid(cx: &mut TestAppContext) {
     let (window, ws) = open(cx);
     with(cx, window, &ws, |ws, w, cx| {
-        ws.toggle_tool_window(ToolWindowKind::Git, w, cx)
+        ws.toggle_tool_window(ToolWindowKind::Terminal, w, cx)
     });
     assert!(dock_open(cx, &ws, DockPlacement::Left) && dock_open(cx, &ws, DockPlacement::Bottom));
 

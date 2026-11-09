@@ -16,9 +16,9 @@ use gpui_kit::{
 
 use crate::FerroIcon;
 
-/// A tool-window stripe button: an icon on the left/right edge of the window
-/// that opens and closes a tool window (IntelliJ's "stripe").
-pub fn stripe_button(
+/// A panel toggle in the status bar (Zed): the panel's icon, highlighted
+/// while the panel is on screen; a click shows or hides it.
+pub fn panel_toggle(
     id: impl Into<ElementId>,
     icon: FerroIcon,
     tooltip: impl Into<SharedString>,
@@ -28,13 +28,13 @@ pub fn stripe_button(
     Button::new(id)
         .icon(Icon::from(icon))
         .ghost()
-        .small()
+        .xsmall()
         .selected(active)
         .tooltip(tooltip)
         .on_click(on_click)
 }
 
-/// A main-toolbar widget: optional icon, a label and a dropdown caret.
+/// A title-bar picker: optional icon, a label and a dropdown caret.
 pub fn toolbar_widget(
     id: impl Into<ElementId>,
     icon: Option<FerroIcon>,

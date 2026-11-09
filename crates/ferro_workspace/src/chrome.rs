@@ -1,37 +1,41 @@
-//! Window chrome around the dock area: the title bar with the main toolbar,
-//! the tool-window stripes and the status bar.
+//! Window chrome around the dock area, in the Zed layout (plan §8, Stage 1):
+//! a slim single-row title bar (application menu, project and branch
+//! pickers; run configuration, notifications and settings on the right) and
+//! the status bar, which doubles as the panel switcher — toggles for the
+//! left dock on its left end, for the bottom and right docks on its right
+//! end.
 
-use ferro_keymap::{Platform, shortcut_for};
 use ferro_services::{RunState, ServerHealth};
 use ferro_ui::{FerroIcon, components, tr, tr_args};
 use gpui_kit::{
     AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
     Styled as _, Window,
     component::{
-        ActiveTheme as _, Disableable as _, Icon, Sizable as _, TitleBar,
+        ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, TitleBar,
         button::{Button, ButtonVariants as _},
         h_flex,
-        menu::{DropdownMenu as _, PopupMenuItem},
-        v_flex,
+        menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     },
     div,
     prelude::FluentBuilder as _,
     px,
 };
 
+use gpui_kit::component::dock::DockPlacement;
+
 use crate::{
-    actions::*,
-    app_state::AppState,
-    editor::language_display,
-    tool_window::{StripeSlot, ToolWindowKind},
+    actions::*, app_state::AppState, editor::language_display, tool_window::ToolWindowKind,
     workspace::Workspace,
 };
 
 /// A tooltip with the action's shortcut appended, e.g. "Project (Alt+1)".
-fn with_shortcut(label: SharedString, action_id: &str, cx: &gpui_kit::App) -> SharedString {
-    let preset = AppState::settings(cx).keymap;
-    match shortcut_for(action_id, preset, Platform::current()) {
-        Some(keys) => format!("{label}  ({})", display_keystroke(keys)).into(),
+pub(crate) fn with_shortcut(
+    label: SharedString,
+    action_id: &str,
+    cx: &gpui_kit::App,
+) -> SharedString {
+    match AppState::shortcut(action_id, cx) {
+        Some(keys) => format!("{label}  ({})", display_keystroke(&keys)).into(),
         None => label,
     }
 }
@@ -223,17 +227,24 @@ impl Workspace {
                                 Box::new(LanguagePolish),
                             )
                         })
-                        .submenu(tr("menu-keymap"), window, cx, move |menu, _, _| {
-                            menu.menu_with_check(
-                                "IntelliJ IDEA",
-                                keymap == ferro_keymap::KeymapPreset::IntelliJ,
-                                Box::new(KeymapIntelliJ),
-                            )
-                            .menu_with_check(
-                                "VS Code",
-                                keymap == ferro_keymap::KeymapPreset::VsCode,
-                                Box::new(KeymapVsCode),
-                            )
+                        .submenu(tr("menu-keymap"), window, cx, move |mut menu, _, _| {
+                            for preset in ferro_keymap::KeymapPreset::ALL {
+                                menu = menu.menu_with_check(
+                                    preset.display_name(),
+                                    keymap.base == preset,
+                                    keymap_action(preset),
+                                );
+                            }
+                            menu.separator()
+                                .menu_with_check(
+                                    tr("action-toggle-vim-mode"),
+                                    keymap.vim_mode,
+                                    Box::new(ToggleVimMode),
+                                )
+                                .menu(
+                                    tr("action-open-keymap-settings"),
+                                    Box::new(OpenKeymapSettings),
+                                )
                         })
                         .menu_with_check(
                             tr("action-toggle-compact-mode"),
@@ -242,50 +253,80 @@ impl Workspace {
                         )
                 });
 
-        // Main menu: in-window bar on Windows/Linux, hamburger in compact mode.
-        let menu_element: Option<AnyElement> = if native_menu {
-            None
-        } else if compact {
+        // Application menu: native on macOS, a hamburger button in the title
+        // bar on Windows and Linux (as in Zed).
+        let menu_element: Option<AnyElement> = (!native_menu).then(|| {
             let menus = crate::menus::build(cx);
-            Some(
-                components::icon_button("main-menu", FerroIcon::Menu, tr("toolbar-main-menu"))
-                    .dropdown_menu(move |mut popup, window, cx| {
-                        for menu in &menus {
-                            let items: Vec<_> = menu
-                                .items
-                                .iter()
-                                .filter_map(|item| match item {
-                                    gpui_kit::MenuItem::Action { name, action, .. } => {
-                                        Some((name.clone(), action.boxed_clone()))
-                                    }
-                                    _ => None,
-                                })
-                                .collect();
-                            popup = popup.submenu(
-                                menu.name.clone(),
-                                window,
-                                cx,
-                                move |mut sub, _, _| {
-                                    for (name, action) in &items {
-                                        sub = sub.menu(name.clone(), action.boxed_clone());
-                                    }
-                                    sub
-                                },
-                            );
-                        }
-                        popup
-                    })
-                    .into_any_element(),
-            )
-        } else {
-            Some(self.app_menu_bar.clone().into_any_element())
-        };
+            components::icon_button("main-menu", FerroIcon::Menu, tr("toolbar-main-menu"))
+                .dropdown_menu(move |mut popup, window, cx| {
+                    for menu in &menus {
+                        let items: Vec<_> = menu
+                            .items
+                            .iter()
+                            .filter_map(|item| match item {
+                                gpui_kit::MenuItem::Action { name, action, .. } => {
+                                    Some((name.clone(), action.boxed_clone()))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        popup =
+                            popup.submenu(menu.name.clone(), window, cx, move |mut sub, _, _| {
+                                for (name, action) in &items {
+                                    sub = sub.menu(name.clone(), action.boxed_clone());
+                                }
+                                sub
+                            });
+                    }
+                    popup
+                })
+                .into_any_element()
+        });
 
-        let height = if compact { px(32.) } else { px(40.) };
+        // Notification bell: toggles the Notifications panel; a dot marks
+        // unread ones.
+        let unread = self
+            .services
+            .status
+            .notifications()
+            .iter()
+            .filter(|n| !n.read)
+            .count();
+        let accent = cx.theme().primary;
+        let bell = div()
+            .relative()
+            .child(
+                components::icon_button(
+                    "notifications",
+                    FerroIcon::Notifications,
+                    with_shortcut(
+                        ToolWindowKind::Notifications.title(),
+                        ToolWindowKind::Notifications.action_id(),
+                        cx,
+                    ),
+                )
+                .selected(self.is_tool_window_visible(ToolWindowKind::Notifications, cx))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(ToggleNotifications), cx)
+                }),
+            )
+            .when(unread > 0, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top(px(4.))
+                        .right(px(4.))
+                        .size(px(6.))
+                        .rounded_full()
+                        .bg(accent),
+                )
+            });
+
+        let height = if compact { px(30.) } else { px(34.) };
         let _ = window;
         TitleBar::new().h(height).child(
             h_flex()
-                .id("main-toolbar")
+                .id("title-bar")
                 .w_full()
                 .h_full()
                 .gap_1()
@@ -323,69 +364,64 @@ impl Workspace {
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(Stop), cx)),
                 )
                 .child(div().w(px(8.)))
-                .child(
-                    components::icon_button(
-                        "search",
-                        FerroIcon::Search,
-                        with_shortcut(tr("action-find-action"), "ferro::FindAction", cx),
-                    )
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(FindAction), cx)),
-                )
+                .child(bell)
                 .child(settings_menu),
         )
     }
 
-    pub(crate) fn render_stripe(
-        &mut self,
-        side: StripeSlot,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let theme = cx.theme();
-        let (bg, border) = (theme.title_bar, theme.title_bar_border);
-        let button = |kind: ToolWindowKind, this: &Self, cx: &mut Context<Self>| {
-            let active = this.is_tool_window_visible(kind, cx);
-            components::stripe_button(
-                SharedString::from(format!("stripe-{}", kind.id())),
+    /// One status-bar toggle: the tool window's icon, highlighted while it
+    /// is on screen. Right-click moves it to another dock.
+    fn render_panel_toggle(&self, kind: ToolWindowKind, cx: &mut Context<Self>) -> AnyElement {
+        let active = self.is_tool_window_visible(kind, cx);
+        let current = self.tool_window_placement(kind, cx);
+        let this = cx.entity().downgrade();
+        div()
+            .id(SharedString::from(format!("toggle-{}", kind.id())))
+            .child(components::panel_toggle(
+                SharedString::from(format!("status-{}", kind.id())),
                 kind.icon(),
                 with_shortcut(kind.title(), kind.action_id(), cx),
                 active,
                 cx.listener(move |this, _, window, cx| this.toggle_tool_window(kind, window, cx)),
-            )
-        };
-        let group = |slot: StripeSlot, this: &Self, cx: &mut Context<Self>| {
-            v_flex().gap_1().children(
-                ToolWindowKind::ALL
-                    .into_iter()
-                    .filter(|k| k.stripe() == slot)
-                    .map(|k| button(k, this, cx))
-                    .collect::<Vec<_>>(),
-            )
-        };
-        let content = match side {
-            StripeSlot::Right => v_flex().child(group(StripeSlot::Right, self, cx)),
-            _ => v_flex()
-                .h_full()
-                .justify_between()
-                .child(group(StripeSlot::LeftTop, self, cx))
-                .child(group(StripeSlot::LeftBottom, self, cx)),
-        };
-        v_flex()
-            .id(match side {
-                StripeSlot::Right => "stripe-right",
-                _ => "stripe-left",
+            ))
+            .context_menu(move |menu: PopupMenu, _, _| {
+                let mut menu = menu.label(kind.title());
+                for (placement, key) in [
+                    (DockPlacement::Left, "dock-move-left"),
+                    (DockPlacement::Bottom, "dock-move-bottom"),
+                    (DockPlacement::Right, "dock-move-right"),
+                ] {
+                    let this = this.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(tr(key))
+                            .checked(placement == current)
+                            .on_click(move |_, window, cx| {
+                                let _ = this.update(cx, |this, cx| {
+                                    this.move_tool_window(kind, placement, window, cx)
+                                });
+                            }),
+                    );
+                }
+                menu
             })
-            .w(px(40.))
-            .h_full()
-            .py_1()
-            .items_center()
-            .bg(bg)
-            .map(|el| match side {
-                StripeSlot::Right => el.border_l_1(),
-                _ => el.border_r_1(),
-            })
-            .border_color(border)
-            .child(content)
+            .into_any_element()
+    }
+
+    /// The toggles of every tool window currently in `docks`.
+    fn render_panel_toggles(
+        &self,
+        docks: &[DockPlacement],
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut toggles = Vec::new();
+        for dock in docks {
+            for kind in ToolWindowKind::ALL {
+                if self.tool_window_placement(kind, cx) == *dock {
+                    toggles.push(self.render_panel_toggle(kind, cx));
+                }
+            }
+        }
+        toggles
     }
 
     pub(crate) fn render_status_bar(
@@ -414,6 +450,11 @@ impl Workspace {
             }
             None => (None, None),
         };
+        let problems = editor.as_ref().map(|e| e.read(cx).problem_counts());
+        let indent = tr_args(
+            "editor-status-indent",
+            &[("size", AppState::settings(cx).editor.tab_size.into())],
+        );
 
         let task = self.status.task.clone().map(|task| {
             h_flex()
@@ -440,22 +481,40 @@ impl Workspace {
                 .child(format!("{}: {}", server.name, state))
         }));
 
-        let branch = self.status.branch.as_ref().map(|b| b.name.clone());
         let memory = self
             .status
             .memory_mb
             .map(|mb| tr_args("status-memory", &[("mb", mb.into())]));
 
+        let left_toggles = self.render_panel_toggles(&[DockPlacement::Left], cx);
+        let right_toggles =
+            self.render_panel_toggles(&[DockPlacement::Bottom, DockPlacement::Right], cx);
+        let (errors, warnings) = problems.unwrap_or((0, 0));
+
         h_flex()
             .id("status-bar")
             .h(px(26.))
-            .px_2()
+            .px_1()
             .gap_3()
             .text_xs()
             .text_color(muted)
             .bg(bg)
             .border_t_1()
             .border_color(border)
+            // Left: left-dock toggles, diagnostics, background activity.
+            .child(h_flex().id("status-left-docks").children(left_toggles))
+            .child(
+                Button::new("status-problems")
+                    .ghost()
+                    .xsmall()
+                    .icon(Icon::from(FerroIcon::Problems))
+                    .label(tr_args(
+                        "editor-problem-count",
+                        &[("errors", errors.into()), ("warnings", warnings.into())],
+                    ))
+                    .tooltip(tr("editor-status-problems"))
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleProblems), cx)),
+            )
             .child(
                 h_flex()
                     .gap_3()
@@ -476,21 +535,11 @@ impl Workspace {
             .child(
                 components::status_item("status-encoding", "UTF-8").tooltip(tr("status-encoding")),
             )
-            .child(
-                components::status_item("status-indent", tr("status-indent-4"))
-                    .tooltip(tr("status-indent")),
-            )
+            .child(components::status_item("status-indent", indent).tooltip(tr("status-indent")))
             .when_some(language, |el, language| {
                 el.child(
                     components::status_item("status-language", language)
                         .tooltip(tr("status-language")),
-                )
-            })
-            .when_some(branch, |el, branch| {
-                el.child(
-                    components::status_item("status-branch", branch)
-                        .icon(Icon::from(FerroIcon::Branch))
-                        .tooltip(tr("toolbar-branch")),
                 )
             })
             .when_some(memory, |el, memory| {
@@ -503,6 +552,8 @@ impl Workspace {
                         .tooltip(tr("status-memory-tooltip")),
                 )
             })
+            // Right: bottom- and right-dock toggles.
+            .child(h_flex().id("status-right-docks").children(right_toggles))
     }
 }
 

@@ -1,4 +1,5 @@
-//! The welcome screen: recent projects and New / Open / Get from VCS.
+//! The welcome screen: recent projects, New / Open / Get from VCS, and the
+//! onboarding choices (theme, keymap scheme, Vim mode) as in Zed.
 
 use ferro_services::{RecentProject, RecentProjectsService};
 use ferro_ui::{FerroIcon, components, tr, tr_args};
@@ -11,6 +12,7 @@ use gpui_kit::{
         button::{Button, ButtonVariants as _},
         h_flex,
         input::{Input, InputEvent, InputState},
+        switch::Switch,
         v_flex,
     },
     div,
@@ -18,7 +20,10 @@ use gpui_kit::{
     px,
 };
 
-use crate::actions::*;
+use ferro_keymap::KeymapPreset;
+use ferro_settings::themes;
+
+use crate::{actions::*, app_state::AppState};
 
 pub struct WelcomeScreen {
     recent: Vec<RecentProject>,
@@ -57,6 +62,99 @@ impl WelcomeScreen {
     }
 }
 
+impl WelcomeScreen {
+    /// "Choose theme" and "Choose keymap", applied immediately.
+    fn render_onboarding(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let settings = AppState::settings(cx).clone();
+        let theme = cx.theme();
+        let (muted, border) = (theme.muted_foreground, theme.border);
+        let themes_row = h_flex().gap_1().children(
+            [
+                (
+                    themes::FERRO_DARK,
+                    "action-theme-dark",
+                    FerroIcon::ThemeDark,
+                ),
+                (
+                    themes::FERRO_LIGHT,
+                    "action-theme-light",
+                    FerroIcon::ThemeLight,
+                ),
+                (
+                    themes::HIGH_CONTRAST,
+                    "action-theme-high-contrast",
+                    FerroIcon::HighContrast,
+                ),
+            ]
+            .map(|(name, key, icon)| {
+                Button::new(SharedString::from(format!("onboard-theme-{key}")))
+                    .small()
+                    .icon(Icon::from(icon))
+                    .label(tr(key))
+                    .selected(settings.appearance.theme == name)
+                    .on_click(move |_, _, cx| crate::app_state::set_theme(name, cx))
+            }),
+        );
+        let keymap_row = h_flex()
+            .gap_1()
+            .flex_wrap()
+            .children(KeymapPreset::ALL.map(|preset| {
+                Button::new(SharedString::from(format!(
+                    "onboard-keymap-{}",
+                    preset.action_id()
+                )))
+                .small()
+                .label(preset.display_name())
+                .selected(settings.keymap.base == preset)
+                .on_click(move |_, _, cx| crate::app_state::set_keymap(preset, cx))
+            }));
+        v_flex()
+            .p_3()
+            .gap_2()
+            .rounded(px(8.))
+            .border_1()
+            .border_color(border)
+            .child(
+                div()
+                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                    .child(tr("settings-welcome-get-started")),
+            )
+            .child(
+                h_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .w(px(120.))
+                            .text_sm()
+                            .text_color(muted)
+                            .child(tr("settings-welcome-choose-theme")),
+                    )
+                    .child(themes_row),
+            )
+            .child(
+                h_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .w(px(120.))
+                            .text_sm()
+                            .text_color(muted)
+                            .child(tr("settings-welcome-choose-keymap")),
+                    )
+                    .child(keymap_row),
+            )
+            .child(
+                h_flex().gap_3().child(div().w(px(120.))).child(
+                    Switch::new("onboard-vim")
+                        .checked(settings.keymap.vim_mode)
+                        .label(tr("action-toggle-vim-mode"))
+                        .accessibility_label(tr("action-toggle-vim-mode"))
+                        .on_click(|on: &bool, _, cx| crate::app_state::set_vim_mode(*on, cx)),
+                ),
+            )
+    }
+}
+
 impl Focusable for WelcomeScreen {
     fn focus_handle(&self, _: &gpui_kit::App) -> FocusHandle {
         self.focus_handle.clone()
@@ -73,6 +171,7 @@ fn opened_ago(days: u32) -> SharedString {
 
 impl Render for WelcomeScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let onboarding = self.render_onboarding(cx);
         let theme = cx.theme();
         let (bg, side_bg, border, muted, hover, primary) = (
             theme.background,
@@ -231,6 +330,7 @@ impl Render for WelcomeScreen {
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .child(tr("welcome-title")),
                             )
+                            .child(onboarding)
                             .child(
                                 h_flex()
                                     .gap_2()

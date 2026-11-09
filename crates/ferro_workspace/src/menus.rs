@@ -1,8 +1,7 @@
 //! The application menu, built from the action catalog.
 //!
 //! On macOS it becomes the native global menu bar; on Windows and Linux the
-//! same menus are drawn in the window by GPUI Kit's `AppMenuBar` (or behind
-//! the hamburger button in compact mode). Labels are localized, so the menus
+//! same menus open from the hamburger button in the title bar (as in Zed). Labels are localized, so the menus
 //! are rebuilt whenever the language or keymap changes.
 
 use ferro_ui::tr;
@@ -91,18 +90,15 @@ pub fn build(cx: &App) -> Vec<Menu> {
     );
     let keymaps = menu(
         "menu-keymap",
-        vec![
-            checked(
-                "ferro::KeymapIntelliJ",
-                keymap == ferro_keymap::KeymapPreset::IntelliJ,
-                cx,
-            ),
-            checked(
-                "ferro::KeymapVsCode",
-                keymap == ferro_keymap::KeymapPreset::VsCode,
-                cx,
-            ),
-        ],
+        ferro_keymap::KeymapPreset::ALL
+            .iter()
+            .map(|preset| checked(preset.action_id(), keymap.base == *preset, cx))
+            .chain([
+                sep(),
+                checked("ferro::ToggleVimMode", keymap.vim_mode, cx),
+                item("ferro::OpenKeymapSettings", cx),
+            ])
+            .collect(),
     );
     let tool_windows = menu(
         "menu-tool-windows",
@@ -116,6 +112,7 @@ pub fn build(cx: &App) -> Vec<Menu> {
         menu(
             "menu-file",
             vec![
+                item("ferro::NewFile", cx),
                 item("ferro::NewProject", cx),
                 item("ferro::OpenProject", cx),
                 item("ferro::GetFromVcs", cx),
@@ -124,13 +121,50 @@ pub fn build(cx: &App) -> Vec<Menu> {
                 item("ferro::CloseProject", cx),
                 sep(),
                 item("ferro::OpenSettings", cx),
+                item("ferro::OpenKeymapSettings", cx),
+                item("ferro::OpenSettingsFile", cx),
                 sep(),
                 item("ferro::Quit", cx),
+            ],
+        ),
+        menu(
+            "menu-navigate",
+            vec![
+                item("ferro::QuickOpen", cx),
+                item("ferro::CommandPalette", cx),
+                item("ferro::GoToSymbolInFile", cx),
+                item("ferro::GoToSymbolInWorkspace", cx),
+                item("ferro::GoToLine", cx),
+                sep(),
+                item("ferro::GoBack", cx),
+                item("ferro::GoForward", cx),
+                sep(),
+                item("ferro::FindInFiles", cx),
+                item("ferro::ReplaceInFiles", cx),
+                sep(),
+                item("ferro::SelectOpenedFile", cx),
+                item("ferro::NextProblem", cx),
+                item("ferro::PreviousProblem", cx),
+            ],
+        ),
+        menu(
+            "menu-code",
+            vec![
+                item("ferro::TriggerCompletion", cx),
+                item("ferro::QuickFix", cx),
+                item("ferro::QuickDocumentation", cx),
+                item("ferro::ParameterInfo", cx),
+                sep(),
+                item("ferro::RenameSymbol", cx),
+                item("ferro::ToggleBreakpoint", cx),
             ],
         ),
         Menu::new(tr("menu-view")).items(
             [
                 Some(MenuItem::submenu(tool_windows)),
+                item("ferro::ToggleLeftDock", cx),
+                item("ferro::ToggleBottomDock", cx),
+                item("ferro::ToggleRightDock", cx),
                 item("ferro::HideAllToolWindows", cx),
                 item("ferro::MaximizeToolWindow", cx),
                 item("ferro::ResetLayout", cx),
@@ -139,7 +173,7 @@ pub fn build(cx: &App) -> Vec<Menu> {
                 Some(MenuItem::submenu(language)),
                 Some(MenuItem::submenu(keymaps)),
                 sep(),
-                item("ferro::FindAction", cx),
+                item("ferro::CommandPalette", cx),
             ]
             .into_iter()
             .flatten(),
@@ -157,6 +191,7 @@ pub fn build(cx: &App) -> Vec<Menu> {
                 item("ferro::CloseTab", cx),
                 item("ferro::CloseOtherTabs", cx),
                 item("ferro::CloseAllTabs", cx),
+                item("ferro::ReopenClosedTab", cx),
             ],
         ),
         menu(
@@ -165,12 +200,24 @@ pub fn build(cx: &App) -> Vec<Menu> {
                 item("ferro::Run", cx),
                 item("ferro::Debug", cx),
                 item("ferro::Stop", cx),
+                sep(),
+                item("ferro::EditRunConfigurations", cx),
+            ],
+        ),
+        menu(
+            "menu-vcs",
+            vec![
+                item("ferro::ToggleCommit", cx),
+                item("ferro::ToggleGit", cx),
+                sep(),
+                item("ferro::ShowDiff", cx),
+                item("ferro::ResolveConflicts", cx),
             ],
         ),
         menu(
             "menu-help",
             vec![
-                item("ferro::FindAction", cx),
+                item("ferro::CommandPalette", cx),
                 item("ferro::ShowWelcome", cx),
                 sep(),
                 item("ferro::About", cx),
@@ -180,7 +227,7 @@ pub fn build(cx: &App) -> Vec<Menu> {
 }
 
 /// Install the menus: the native menu bar on macOS, and the copy GPUI Kit's
-/// in-window `AppMenuBar` reads everywhere.
+/// menu components read everywhere.
 pub fn install(cx: &mut App) {
     let menus = build(cx);
     let owned = build(cx).into_iter().map(Menu::owned).collect();

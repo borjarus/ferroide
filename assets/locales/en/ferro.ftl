@@ -11,10 +11,16 @@ menu-tool-windows = Tool Windows
 menu-appearance = Appearance
 menu-language = Language
 menu-keymap = Keymap
+menu-navigate = Navigate
+menu-code = Code
+menu-vcs = Git
 
 ## Action categories (Find Action)
 category-file = File
 category-view = View
+category-navigate = Navigate
+category-code = Code
+category-vcs = Version Control
 category-tool-windows = Tool Windows
 category-editor = Editor
 category-run = Run
@@ -66,7 +72,41 @@ action-theme-light = Ferro Light
 action-theme-high-contrast = High Contrast
 action-language-english = Language: English
 action-language-polish = Language: Polish
-action-keymap-intellij = Keymap: IntelliJ IDEA
+action-keymap-jetbrains = Keymap: JetBrains (IntelliJ IDEA)
+action-keymap-zed = Keymap: Zed
+action-keymap-sublime = Keymap: Sublime Text
+action-keymap-emacs = Keymap: Emacs
+action-toggle-vim-mode = Toggle Vim Mode
+action-new-file = New File…
+action-open-settings-file = Open Settings File (settings.toml)
+action-open-keymap-settings = Keyboard Shortcuts
+action-toggle-left-dock = Toggle Left Dock
+action-toggle-bottom-dock = Toggle Bottom Dock
+action-toggle-right-dock = Toggle Right Dock
+action-quick-open = Go to File…
+action-command-palette = Show All Commands
+action-go-to-symbol-in-file = Go to Symbol in File…
+action-go-to-symbol-in-workspace = Go to Symbol in Workspace…
+action-go-back = Back
+action-go-forward = Forward
+action-go-to-line = Go to Line…
+action-find-in-files = Find in Files…
+action-replace-in-files = Replace in Files…
+action-select-opened-file = Select Opened File
+action-next-problem = Next Problem
+action-previous-problem = Previous Problem
+action-trigger-completion = Trigger Completion
+action-quick-fix = Quick Fix…
+action-quick-documentation = Quick Documentation
+action-parameter-info = Parameter Info
+action-rename-symbol = Rename Symbol…
+action-toggle-breakpoint = Toggle Breakpoint
+action-new-terminal = New Terminal
+action-toggle-services = Services
+action-reopen-closed-tab = Reopen Closed Tab
+action-edit-run-configurations = Edit Run Configurations…
+action-show-diff = Show Diff
+action-resolve-conflicts = Resolve Conflicts…
 action-keymap-vscode = Keymap: VS Code
 action-show-welcome = Welcome Screen
 action-about = About FerroIDE
@@ -101,6 +141,9 @@ toolbar-branch = Git branch
 toolbar-run-config = Run configuration
 toolbar-settings = Settings
 toolbar-main-menu = Main menu
+dock-move-left = Dock Left
+dock-move-bottom = Dock Bottom
+dock-move-right = Dock Right
 run-no-config = Add Configuration…
 vcs-no-branch = No VCS
 vcs-loading = Loading branches…
@@ -140,7 +183,7 @@ settings-stage-note = The full Settings window arrives in Stage 2.
 
 ## About
 about-version = Version { $version }
-about-stage = Stage 1 preview: complete window layout running on mock services.
+about-stage = Stage 2 preview (M1 "UI Preview"): every main IDE view, running on mock services.
 about-theme-switch = Last theme switch: { $took }
 
 ## Welcome screen
@@ -155,3 +198,7 @@ welcome-days-ago = { $days ->
     [one] { $days } day ago
    *[other] { $days } days ago
 }
+
+## Stage 2 shared
+feature-coming-soon = This view is not available yet.
+tool-services = Services

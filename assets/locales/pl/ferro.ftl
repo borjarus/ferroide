@@ -11,10 +11,16 @@ menu-tool-windows = Okna narzędziowe
 menu-appearance = Wygląd
 menu-language = Język
 menu-keymap = Mapa klawiszy
+menu-navigate = Nawigacja
+menu-code = Kod
+menu-vcs = Git
 
 ## Kategorie akcji (Znajdź akcję)
 category-file = Plik
 category-view = Widok
+category-navigate = Nawigacja
+category-code = Kod
+category-vcs = Kontrola wersji
 category-tool-windows = Okna narzędziowe
 category-editor = Edytor
 category-run = Uruchamianie
@@ -66,7 +72,41 @@ action-theme-light = Ferro Light
 action-theme-high-contrast = Wysoki kontrast
 action-language-english = Język: angielski
 action-language-polish = Język: polski
-action-keymap-intellij = Mapa klawiszy: IntelliJ IDEA
+action-keymap-jetbrains = Mapa klawiszy: JetBrains (IntelliJ IDEA)
+action-keymap-zed = Mapa klawiszy: Zed
+action-keymap-sublime = Mapa klawiszy: Sublime Text
+action-keymap-emacs = Mapa klawiszy: Emacs
+action-toggle-vim-mode = Przełącz tryb Vim
+action-new-file = Nowy plik…
+action-open-settings-file = Otwórz plik ustawień (settings.toml)
+action-open-keymap-settings = Skróty klawiszowe
+action-toggle-left-dock = Pokaż/ukryj lewy panel
+action-toggle-bottom-dock = Pokaż/ukryj dolny panel
+action-toggle-right-dock = Pokaż/ukryj prawy panel
+action-quick-open = Przejdź do pliku…
+action-command-palette = Pokaż wszystkie polecenia
+action-go-to-symbol-in-file = Przejdź do symbolu w pliku…
+action-go-to-symbol-in-workspace = Przejdź do symbolu w projekcie…
+action-go-back = Wstecz
+action-go-forward = Dalej
+action-go-to-line = Przejdź do wiersza…
+action-find-in-files = Znajdź w plikach…
+action-replace-in-files = Zamień w plikach…
+action-select-opened-file = Zaznacz otwarty plik
+action-next-problem = Następny problem
+action-previous-problem = Poprzedni problem
+action-trigger-completion = Pokaż podpowiedzi
+action-quick-fix = Szybka poprawka…
+action-quick-documentation = Szybka dokumentacja
+action-parameter-info = Informacje o parametrach
+action-rename-symbol = Zmień nazwę symbolu…
+action-toggle-breakpoint = Przełącz punkt przerwania
+action-new-terminal = Nowy terminal
+action-toggle-services = Usługi
+action-reopen-closed-tab = Otwórz ponownie zamkniętą kartę
+action-edit-run-configurations = Edytuj konfiguracje uruchomieniowe…
+action-show-diff = Pokaż różnice
+action-resolve-conflicts = Rozwiąż konflikty…
 action-keymap-vscode = Mapa klawiszy: VS Code
 action-show-welcome = Ekran powitalny
 action-about = O programie FerroIDE
@@ -101,6 +141,9 @@ toolbar-branch = Gałąź Git
 toolbar-run-config = Konfiguracja uruchomieniowa
 toolbar-settings = Ustawienia
 toolbar-main-menu = Menu główne
+dock-move-left = Zadokuj po lewej
+dock-move-bottom = Zadokuj na dole
+dock-move-right = Zadokuj po prawej
 run-no-config = Dodaj konfigurację…
 vcs-no-branch = Brak VCS
 vcs-loading = Wczytywanie gałęzi…
@@ -140,7 +183,7 @@ settings-stage-note = Pełne okno ustawień pojawi się w Etapie 2.
 
 ## O programie
 about-version = Wersja { $version }
-about-stage = Podgląd Etapu 1: kompletny układ okna działający na usługach testowych (mockach).
+about-stage = Podgląd Etapu 2 (M1 „UI Preview”): wszystkie główne widoki IDE, działające na usługach testowych (mockach).
 about-theme-switch = Ostatnia zmiana motywu: { $took }
 
 ## Ekran powitalny
@@ -155,3 +198,7 @@ welcome-days-ago = { $days ->
     [one] { $days } dzień temu
    *[other] { $days } dni temu
 }
+
+## Stage 2 shared
+feature-coming-soon = Ten widok nie jest jeszcze dostępny.
+tool-services = Usługi

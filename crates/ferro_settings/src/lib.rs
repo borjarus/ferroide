@@ -1,9 +1,10 @@
 //! User settings and small pieces of persisted UI state.
 //!
-//! Stage 1 keeps this deliberately small: global settings live in
-//! `<config>/FerroIDE/settings.toml`, and per-project window layouts in
-//! `<data>/FerroIDE/layouts/<key>.json`. Project-level settings, JSON Schema
-//! and migrations arrive in Stage 4 (see `docs/FerroIDE_plan.md`).
+//! Global settings live in `<config>/FerroIDE/settings.toml`, keymap
+//! overrides in `<config>/FerroIDE/keymap.toml`, and per-project window
+//! layouts in `<data>/FerroIDE/layouts/<key>.json`. Project-level settings,
+//! JSON Schema and migrations arrive in Stage 4 (see
+//! `docs/FerroIDE_plan.md`).
 //!
 //! Every read tolerates a missing or broken file by falling back to defaults:
 //! a corrupt settings file must never stop the IDE from starting.
@@ -15,8 +16,8 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use ferro_i18n::Locale;
-use ferro_keymap::KeymapPreset;
-use serde::{Deserialize, Serialize};
+use ferro_keymap::{KeymapPreset, UserKeymap};
+use serde::{Deserialize, Deserializer, Serialize};
 
 pub const APP_DIR: &str = "FerroIDE";
 
@@ -39,9 +40,38 @@ pub mod themes {
 #[serde(default)]
 pub struct Settings {
     pub appearance: Appearance,
-    pub keymap: KeymapPreset,
+    #[serde(deserialize_with = "keymap_or_stage1_preset")]
+    pub keymap: KeymapSettings,
     pub locale: Locale,
     pub editor: EditorSettings,
+}
+
+/// `[keymap]` in `settings.toml`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeymapSettings {
+    /// The scheme; the user's `keymap.toml` overrides apply on top.
+    pub base: KeymapPreset,
+    /// Modal editing on top of any scheme. Stored now; the modal layer
+    /// itself arrives with the editor core (Stage 3).
+    pub vim_mode: bool,
+}
+
+/// Stage 1 wrote `keymap = "intellij"`; Stage 2 writes a `[keymap]` table.
+fn keymap_or_stage1_preset<'de, D: Deserializer<'de>>(d: D) -> Result<KeymapSettings, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Either {
+        Table(KeymapSettings),
+        Preset(KeymapPreset),
+    }
+    Ok(match Either::deserialize(d)? {
+        Either::Table(table) => table,
+        Either::Preset(base) => KeymapSettings {
+            base,
+            vim_mode: false,
+        },
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -61,13 +91,26 @@ pub struct EditorSettings {
     pub font_size: f32,
     /// Open editor tabs above this limit close the oldest unpinned one.
     pub tab_limit: usize,
+    /// Spaces per indentation level.
+    pub tab_size: usize,
+    pub soft_wrap: bool,
+    pub line_numbers: bool,
+    /// Type and parameter hints shown inline.
+    pub inlay_hints: bool,
+    /// The enclosing scopes stay at the top while scrolling.
+    pub sticky_lines: bool,
+    pub breadcrumbs: bool,
+    /// Change markers in the gutter (added/modified/deleted lines).
+    pub vcs_markers: bool,
+    /// A single click opens a preview tab, replaced by the next one.
+    pub preview_tabs: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             appearance: Appearance::default(),
-            keymap: KeymapPreset::default(),
+            keymap: KeymapSettings::default(),
             locale: Locale::from_env(),
             editor: EditorSettings::default(),
         }
@@ -90,6 +133,14 @@ impl Default for EditorSettings {
         Self {
             font_size: DEFAULT_EDITOR_FONT_SIZE,
             tab_limit: 10,
+            tab_size: 4,
+            soft_wrap: false,
+            line_numbers: true,
+            inlay_hints: true,
+            sticky_lines: true,
+            breadcrumbs: true,
+            vcs_markers: true,
+            preview_tabs: true,
         }
     }
 }
@@ -103,6 +154,7 @@ impl Settings {
             .clamp(MIN_UI_FONT_SIZE, MAX_UI_FONT_SIZE);
         self.editor.font_size = self.editor.font_size.clamp(6.0, 72.0);
         self.editor.tab_limit = self.editor.tab_limit.clamp(1, 100);
+        self.editor.tab_size = self.editor.tab_size.clamp(1, 16);
         if !themes::ALL.contains(&self.appearance.theme.as_str()) {
             self.appearance.theme = themes::FERRO_DARK.to_string();
         }
@@ -149,6 +201,30 @@ impl Paths {
 
     pub fn settings_file(&self) -> PathBuf {
         self.config_dir.join("settings.toml")
+    }
+
+    pub fn keymap_file(&self) -> PathBuf {
+        self.config_dir.join("keymap.toml")
+    }
+
+    /// Load the user's keymap overrides; missing or broken gives none.
+    pub fn load_user_keymap(&self) -> UserKeymap {
+        let path = self.keymap_file();
+        match fs::read_to_string(&path) {
+            Ok(text) => toml::from_str(&text).unwrap_or_else(|err| {
+                tracing::warn!("ignoring invalid keymap file {}: {err:#}", path.display());
+                UserKeymap::default()
+            }),
+            Err(_) => UserKeymap::default(),
+        }
+    }
+
+    pub fn save_user_keymap(&self, keymap: &UserKeymap) -> Result<()> {
+        let header = "# FerroIDE keymap overrides, applied on top of the scheme chosen in\n\
+                      # settings.toml ([keymap] base). An entry replaces the scheme's\n\
+                      # bindings of its action; empty `keys` unbinds the action.\n\n";
+        let body = toml::to_string_pretty(keymap)?;
+        write_atomic(&self.keymap_file(), format!("{header}{body}").as_bytes())
     }
 
     pub fn layout_file(&self, key: &str) -> PathBuf {
@@ -247,9 +323,40 @@ mod tests {
         let mut settings = Settings::default();
         settings.appearance.theme = themes::FERRO_LIGHT.into();
         settings.locale = Locale::Pl;
-        settings.keymap = KeymapPreset::VsCode;
+        settings.keymap = KeymapSettings {
+            base: KeymapPreset::Emacs,
+            vim_mode: true,
+        };
+        settings.editor.soft_wrap = true;
         paths.save_settings(&settings).unwrap();
         assert_eq!(paths.load_settings(), settings);
+        let text = fs::read_to_string(paths.settings_file()).unwrap();
+        assert!(
+            text.contains("[keymap]") && text.contains("base = \"emacs\""),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn stage1_keymap_setting_is_migrated() {
+        let settings = Settings::from_toml("keymap = \"intellij\"\nlocale = \"pl\"").unwrap();
+        assert_eq!(settings.keymap.base, KeymapPreset::JetBrains);
+        assert!(!settings.keymap.vim_mode);
+        let settings = Settings::from_toml("").unwrap();
+        assert_eq!(settings.keymap.base, KeymapPreset::VsCode);
+    }
+
+    #[test]
+    fn user_keymap_round_trips_through_disk() {
+        let paths = Paths::under(&temp_root("keymap"));
+        assert_eq!(paths.load_user_keymap(), UserKeymap::default());
+        let mut keymap = UserKeymap::default();
+        keymap.set("ferro::QuickOpen", &["ctrl-e".into()]);
+        keymap.set("ferro::GoToLine", &[]);
+        paths.save_user_keymap(&keymap).unwrap();
+        assert_eq!(paths.load_user_keymap(), keymap);
+        let text = fs::read_to_string(paths.keymap_file()).unwrap();
+        assert!(text.contains("[[binding]]"), "{text}");
     }
 
     #[test]

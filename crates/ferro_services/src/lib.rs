@@ -15,7 +15,17 @@ use std::path::{Path, PathBuf};
 
 use futures::future::BoxFuture;
 
+pub mod debug;
+pub mod fuzzy;
+pub mod language;
 pub mod mock;
+pub mod search;
+pub mod terminal;
+
+pub use debug::*;
+pub use language::*;
+pub use search::*;
+pub use terminal::*;
 
 pub type Result<T> = anyhow::Result<T>;
 
@@ -62,6 +72,11 @@ pub trait ProjectService: Send + Sync + 'static {
     fn read_file(&self, path: &Path) -> BoxFuture<'static, Result<String>>;
     /// Added/removed/changed notifications.
     fn subscribe(&self) -> async_channel::Receiver<ProjectEvent>;
+    /// Create an empty file, or a directory, at `path`.
+    fn create(&self, path: &Path, kind: EntryKind) -> BoxFuture<'static, Result<()>>;
+    /// Rename or move `from` to `to`.
+    fn rename(&self, from: &Path, to: &Path) -> BoxFuture<'static, Result<()>>;
+    fn delete(&self, path: &Path) -> BoxFuture<'static, Result<()>>;
 }
 
 /// A project the welcome screen offers to reopen.
@@ -91,23 +106,187 @@ pub struct Branch {
     pub behind: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ChangeKind {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+    Conflicted,
+}
+
+impl ChangeKind {
+    /// The one-letter code git and IntelliJ show.
+    pub fn letter(self) -> &'static str {
+        match self {
+            ChangeKind::Modified => "M",
+            ChangeKind::Added => "A",
+            ChangeKind::Deleted => "D",
+            ChangeKind::Renamed => "R",
+            ChangeKind::Untracked => "U",
+            ChangeKind::Conflicted => "C",
+        }
+    }
+}
+
+/// A changed file in the working tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileChange {
+    pub path: PathBuf,
+    /// Relative to the repository root, `/`-separated.
+    pub relative: String,
+    pub kind: ChangeKind,
+    /// The changelist it belongs to (IntelliJ), e.g. `Changes`.
+    pub changelist: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commit {
+    /// Full hash; views show the first 7–8 characters.
+    pub id: String,
+    /// Parent ids, first parent first. Two or more for a merge.
+    pub parents: Vec<String>,
+    pub author: String,
+    /// Seconds since the Unix epoch.
+    pub timestamp: i64,
+    /// First line.
+    pub subject: String,
+    pub body: String,
+    /// Branch and tag names pointing at it.
+    pub refs: Vec<String>,
+    /// Relative paths of the files it changed.
+    pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineChangeKind {
+    Added,
+    Modified,
+    /// Lines were deleted just above `lines.start`.
+    Deleted,
+}
+
+/// A changed range of the working copy against `HEAD`, for the gutter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineChange {
+    /// 0-based, half-open. Empty for deletions.
+    pub lines: std::ops::Range<u32>,
+    pub kind: LineChangeKind,
+}
+
+/// The two sides of a change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDiff {
+    pub relative: String,
+    pub old_text: String,
+    pub new_text: String,
+    /// The same change as a unified patch (`diff --git` format).
+    pub patch: String,
+}
+
+/// A file with a merge conflict: the common base and both sides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeConflict {
+    pub path: PathBuf,
+    pub relative: String,
+    pub base: String,
+    /// Our side (the current branch).
+    pub ours: String,
+    /// Their side (the branch being merged).
+    pub theirs: String,
+    pub ours_label: String,
+    pub theirs_label: String,
+}
+
 pub trait VcsService: Send + Sync + 'static {
     fn current_branch(&self) -> BoxFuture<'static, Result<Branch>>;
     fn branches(&self) -> BoxFuture<'static, Result<Vec<Branch>>>;
     fn checkout(&self, name: &str) -> BoxFuture<'static, Result<()>>;
+    /// Uncommitted changes.
+    fn changes(&self) -> BoxFuture<'static, Result<Vec<FileChange>>>;
+    /// Commits reachable from all branches, newest first.
+    fn log(&self, limit: usize) -> BoxFuture<'static, Result<Vec<Commit>>>;
+    /// The working copy of `path` against `HEAD`.
+    fn diff(&self, path: &Path) -> BoxFuture<'static, Result<FileDiff>>;
+    /// Changed line ranges of `text` (the editor's current text) against
+    /// `HEAD`. Synchronous, for the gutter.
+    fn line_changes(&self, path: &Path, text: &str) -> Vec<LineChange>;
+    fn conflicts(&self) -> BoxFuture<'static, Result<Vec<MergeConflict>>>;
+    /// Mark the conflicts of `path` resolved, with `text` as the merged file.
+    fn resolve_conflict(&self, path: &Path, text: &str) -> BoxFuture<'static, Result<()>>;
+    /// Commit the given files; returns the new commit id.
+    fn commit(&self, message: &str, paths: &[PathBuf]) -> BoxFuture<'static, Result<String>>;
+    /// Clone `url` into `directory`; returns the project root.
+    fn clone_repository(&self, url: &str, directory: &Path) -> BoxFuture<'static, Result<PathBuf>>;
 }
 
 // ---------------------------------------------------------------------------
 // Run configurations
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunConfiguration {
     pub id: String,
     pub name: String,
     /// e.g. `cargo`, `gradle`, `npm`, `pytest`.
     pub kind: String,
     pub command: String,
+    /// Extra arguments passed to the program.
+    pub arguments: String,
+    /// Relative to the project root; empty is the root.
+    pub working_directory: String,
+    pub environment: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TestStatus {
+    Passed,
+    Failed,
+    Ignored,
+    Running,
+    NotRun,
+}
+
+/// A test, or a suite of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestNode {
+    pub name: String,
+    pub status: TestStatus,
+    pub duration_ms: u32,
+    /// Output or failure message.
+    pub output: Vec<String>,
+    /// File and 0-based line.
+    pub location: Option<(PathBuf, u32)>,
+    pub children: Vec<TestNode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ServiceKind {
+    RunConfiguration,
+    Docker,
+    Database,
+    Group,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ServiceState {
+    Running,
+    Stopped,
+    Failed,
+    /// For groups.
+    None,
+}
+
+/// A node of the Services tool window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceNode {
+    pub name: String,
+    pub kind: ServiceKind,
+    pub state: ServiceState,
+    /// e.g. `localhost:5432`, `Up 2 hours`.
+    pub detail: Option<String>,
+    pub children: Vec<ServiceNode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +308,13 @@ pub trait RunService: Send + Sync + 'static {
     fn start(&self, id: &str, debug: bool) -> Result<()>;
     fn stop(&self, id: &str);
     fn subscribe(&self) -> async_channel::Receiver<RunEvent>;
+    /// Add or replace (by id) a run configuration.
+    fn save_configuration(&self, config: RunConfiguration) -> Result<()>;
+    fn delete_configuration(&self, id: &str);
+    /// Results of the last test run, as a tree of suites.
+    fn test_results(&self) -> Vec<TestNode>;
+    /// The Services tool window tree.
+    fn services(&self) -> Vec<ServiceNode>;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,9 +346,32 @@ pub struct TaskProgress {
     pub done: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NotificationLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+/// An entry of the Notifications tool window (the event log).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationEntry {
+    pub id: u64,
+    pub level: NotificationLevel,
+    pub title: String,
+    pub body: String,
+    /// Seconds since the Unix epoch.
+    pub timestamp: i64,
+    pub read: bool,
+}
+
 pub trait StatusService: Send + Sync + 'static {
     fn language_servers(&self) -> Vec<LanguageServerStatus>;
     fn subscribe_tasks(&self) -> async_channel::Receiver<TaskProgress>;
+    fn notifications(&self) -> Vec<NotificationEntry>;
+    fn mark_notifications_read(&self);
+    fn clear_notifications(&self);
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +386,10 @@ pub struct Services {
     pub vcs: std::sync::Arc<dyn VcsService>,
     pub run: std::sync::Arc<dyn RunService>,
     pub status: std::sync::Arc<dyn StatusService>,
+    pub language: std::sync::Arc<dyn LanguageService>,
+    pub search: std::sync::Arc<dyn SearchService>,
+    pub debug: std::sync::Arc<dyn DebugService>,
+    pub terminal: std::sync::Arc<dyn TerminalService>,
 }
 
 impl Services {
@@ -184,12 +397,24 @@ impl Services {
     /// failure rate and the size of the synthetic stress tree.
     pub fn mock(config: mock::MockConfig) -> Self {
         use std::sync::Arc;
+        let project = Arc::new(mock::MockProjectService::demo(config.clone()));
+        let root = project.root().to_path_buf();
         Self {
-            project: Arc::new(mock::MockProjectService::demo(config.clone())),
             recent: Arc::new(mock::MockRecentProjects::new(config.seed)),
-            vcs: Arc::new(mock::MockVcsService::new(config.clone())),
-            run: Arc::new(mock::MockRunService::new()),
+            vcs: Arc::new(mock::MockVcsService::new(config.clone(), project.clone())),
+            run: Arc::new(mock::MockRunService::new(root.clone())),
+            language: Arc::new(mock::MockLanguageService::new(
+                config.clone(),
+                project.clone(),
+            )),
+            search: Arc::new(mock::MockSearchService::new(
+                config.clone(),
+                project.clone(),
+            )),
+            debug: Arc::new(mock::MockDebugService::new(root.clone())),
+            terminal: Arc::new(mock::MockTerminalService::new(root)),
             status: Arc::new(mock::MockStatusService::new(config)),
+            project,
         }
     }
 }

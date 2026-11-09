@@ -1,6 +1,6 @@
 [package]
 name = "ferro_keymap"
-description = "FerroIDE action catalog and keymaps (IntelliJ default); no GUI dependency"
+description = "FerroIDE action catalog and keymaps (VS Code, JetBrains, Zed, Sublime, Emacs); no GUI dependency"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,9 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

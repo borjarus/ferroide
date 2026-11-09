@@ -68,6 +68,8 @@ enum Flavor {
     Fast,
     Slow,
     Failing,
+    /// 10× typical data: a 1,000,000-file project tree.
+    Huge,
 }
 
 struct Storybook {
@@ -75,7 +77,7 @@ struct Storybook {
     tool: ToolWindowKind,
     flavor: Flavor,
     panel: Option<Entity<ToolWindowPanel>>,
-    active_stripe: usize,
+    active_toggle: usize,
 }
 
 impl Storybook {
@@ -88,6 +90,10 @@ impl Storybook {
             },
             Flavor::Failing => MockConfig {
                 failure_rate: 1.0,
+                ..MockConfig::default()
+            },
+            Flavor::Huge => MockConfig {
+                stress_files: 1_000_000,
                 ..MockConfig::default()
             },
         })
@@ -112,27 +118,25 @@ impl Storybook {
         match self.story {
             Story::Chrome => v_flex()
                 .gap_4()
-                .child(section("Tool-window stripe (click to activate)", muted))
-                .child(
-                    v_flex()
-                        .w(px(40.))
-                        .gap_1()
-                        .p_1()
-                        .bg(theme.title_bar)
-                        .children(ToolWindowKind::ALL.iter().enumerate().map(|(ix, kind)| {
-                            components::stripe_button(
-                                SharedString::from(format!("s-{ix}")),
-                                kind.icon(),
-                                kind.title(),
-                                self.active_stripe == ix,
-                                cx.listener(move |this, _, _, cx| {
-                                    this.active_stripe = ix;
-                                    cx.notify();
-                                }),
-                            )
-                        })),
-                )
-                .child(section("Toolbar widgets", muted))
+                .child(section(
+                    "Status-bar panel toggles (click to activate)",
+                    muted,
+                ))
+                .child(h_flex().gap_1().p_1().bg(theme.status_bar).children(
+                    ToolWindowKind::ALL.iter().enumerate().map(|(ix, kind)| {
+                        components::panel_toggle(
+                            SharedString::from(format!("s-{ix}")),
+                            kind.icon(),
+                            kind.title(),
+                            self.active_toggle == ix,
+                            cx.listener(move |this, _, _, cx| {
+                                this.active_toggle = ix;
+                                cx.notify();
+                            }),
+                        )
+                    }),
+                ))
+                .child(section("Title-bar widgets", muted))
                 .child(
                     h_flex()
                         .gap_1()
@@ -281,6 +285,7 @@ impl Storybook {
                                 (Flavor::Fast, "Fast mocks"),
                                 (Flavor::Slow, "2 s latency"),
                                 (Flavor::Failing, "Always failing"),
+                                (Flavor::Huge, "1M files"),
                             ]
                             .into_iter()
                             .map(|(f, label)| {
@@ -409,6 +414,16 @@ impl Storybook {
                                 }),
                         )
                         .child(
+                            Button::new("open-huge")
+                                .label("Workspace (1M files)")
+                                .on_click(|_, _, cx| {
+                                    let _ = ferro_workspace::open_workspace(
+                                        Storybook::services(Flavor::Huge),
+                                        cx,
+                                    );
+                                }),
+                        )
+                        .child(
                             Button::new("open-welcome")
                                 .label("Welcome screen")
                                 .on_click(|_, _, cx| {
@@ -504,7 +519,7 @@ fn main() {
                     tool: ToolWindowKind::Project,
                     flavor: Flavor::Fast,
                     panel: None,
-                    active_stripe: 0,
+                    active_toggle: 0,
                 })
             })
             .expect("open storybook window");

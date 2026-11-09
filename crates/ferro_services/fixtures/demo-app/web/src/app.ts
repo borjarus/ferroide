@@ -8,4 +8,5 @@ export function greet({ name, excited = false }: Greeting): string {
   return excited ? `${base}!` : base;
 }
 
+// TODO: localize the greeting
 document.querySelector("#app")!.textContent = greet({ name: "FerroIDE", excited: true });

@@ -1,20 +1,36 @@
 //! The FerroIDE workspace: windows, dock, tool windows, editor tabs,
-//! toolbar, status bar, menus, Find Action and the welcome screen.
+//! toolbar, status bar, menus, Quick Open, the Command Palette, Settings,
+//! dialogs, the VCS views and the welcome screen.
 //!
-//! Views depend only on the service traits in `ferro_services`; in Stage 1
-//! every window runs on the mocks (see `docs/FerroIDE_plan.md`, §5.3).
+//! Views depend only on the service traits in `ferro_services`; in Stages
+//! 1–2 every window runs on the mocks (see `docs/FerroIDE_plan.md`, §5.3).
 
 pub mod actions;
 pub mod app_state;
 mod chrome;
-mod dialogs;
+pub mod dialogs;
 pub mod editor;
-mod find_action;
+pub mod find_in_files;
+pub mod keymap_page;
 pub mod menus;
+pub mod panels;
+pub mod quick_open;
+pub mod requests;
+pub mod settings_window;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_editor;
+#[cfg(test)]
+mod tests_panels;
+#[cfg(test)]
+mod tests_search;
+#[cfg(test)]
+mod tests_settings;
+#[cfg(test)]
+mod tests_vcs;
 pub mod tool_window;
-pub mod tool_windows;
+pub mod vcs;
 pub mod welcome;
 pub mod workspace;
 
@@ -53,7 +69,7 @@ fn log_err<T>(result: Result<T>) {
     }
 }
 
-/// Mock services for a project opened in Stage 1.
+/// Mock services for a project opened in Stages 1–2.
 pub fn mock_services() -> Services {
     Services::mock(MockConfig::default())
 }
