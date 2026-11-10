@@ -11,7 +11,7 @@ publish.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-rust", "tree-sitter-toml", "tree-sitter-typescript", "tree-sitter-markdown"] }
 anyhow.workspace = true
 thiserror.workspace = true
-similar = "2"
+similar = "3"
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
