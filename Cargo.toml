@@ -20,6 +20,7 @@ ferro_keymap = { path = "crates/ferro_keymap" }
 ferro_settings = { path = "crates/ferro_settings" }
 ferro_i18n = { path = "crates/ferro_i18n" }
 ferro_perf = { path = "crates/ferro_perf" }
+ferro_text = { path = "crates/ferro_text" }
 
 # Verified in November 2026 (see docs/adr/ADR-001-gui-framework.md):
 gpui-kit = "0.9"

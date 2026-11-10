@@ -26,7 +26,7 @@ use gpui_kit::{
     px,
 };
 
-use super::{EditorPanel, model};
+use super::{EditorEvent, EditorPanel, ExternalChange, model};
 use crate::{actions, app_state::AppState};
 
 /// Where the first text row starts below the editor's top edge (GPUI Kit's
@@ -87,6 +87,7 @@ impl EditorPanel {
                     this.close_signature(cx);
                 }
             }))
+            .children(self.render_notice_bars(cx))
             .child(self.render_header(settings.breadcrumbs, settings.soft_wrap, cx))
             .child(
                 h_flex()
@@ -133,6 +134,139 @@ impl EditorPanel {
         if left > px(0.) && left < px(240.) {
             self.text_left = Some(left);
         }
+    }
+
+    /// Bars above the text: a conflicting change on disk (with Reload /
+    /// Compare / Keep Mine), large-file mode, decoding problems, mixed line
+    /// separators.
+    fn render_notice_bars(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let theme = cx.theme();
+        let (warning, muted, border, bg) = (
+            theme.warning,
+            theme.muted_foreground,
+            theme.border,
+            theme.secondary,
+        );
+        let file = self.file_name();
+        let bar = |id: &'static str, icon: FerroIcon, color, text: SharedString| {
+            h_flex()
+                .id(id)
+                .gap_2()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .bg(bg)
+                .border_b_1()
+                .border_color(border)
+                .child(Icon::from(icon).small().text_color(color))
+                .child(div().flex_1().min_w_0().child(text))
+        };
+        let mut bars = Vec::new();
+        match &self.external {
+            Some(ExternalChange::Modified(_)) => bars.push(
+                bar(
+                    "editor-disk-changed",
+                    FerroIcon::Warning,
+                    warning,
+                    tr_args(
+                        "editor-changed-on-disk-dirty",
+                        &[("file", file.to_string().into())],
+                    ),
+                )
+                .child(
+                    Button::new("editor-reload")
+                        .xsmall()
+                        .label(tr("editor-reload"))
+                        .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
+                )
+                .child(
+                    Button::new("editor-compare")
+                        .xsmall()
+                        .label(tr("editor-compare"))
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(EditorEvent::CompareWithDisk))),
+                )
+                .child(
+                    Button::new("editor-keep-mine")
+                        .xsmall()
+                        .ghost()
+                        .label(tr("editor-keep-mine"))
+                        .on_click(cx.listener(|this, _, _, cx| this.keep_mine(cx))),
+                )
+                .into_any_element(),
+            ),
+            Some(ExternalChange::Deleted) => bars.push(
+                bar(
+                    "editor-disk-deleted",
+                    FerroIcon::Warning,
+                    warning,
+                    tr_args(
+                        "editor-deleted-on-disk",
+                        &[("file", file.to_string().into())],
+                    ),
+                )
+                .child(
+                    Button::new("editor-keep-mine")
+                        .xsmall()
+                        .ghost()
+                        .label(tr("editor-keep-mine"))
+                        .on_click(cx.listener(|this, _, _, cx| this.keep_mine(cx))),
+                )
+                .into_any_element(),
+            ),
+            None => {}
+        }
+        let disk = &self.disk;
+        if disk.truncated {
+            let mb = (ferro_text::file::PREVIEW_BYTES / (1024 * 1024)) as u64;
+            bars.push(
+                bar(
+                    "editor-huge",
+                    FerroIcon::Info,
+                    muted,
+                    tr_args("editor-huge-file", &[("mb", mb.into())]),
+                )
+                .into_any_element(),
+            );
+        } else if disk.is_large() {
+            bars.push(
+                bar(
+                    "editor-large",
+                    FerroIcon::Info,
+                    muted,
+                    tr("editor-large-file"),
+                )
+                .into_any_element(),
+            );
+        }
+        if disk.decode_errors {
+            bars.push(
+                bar(
+                    "editor-decode-errors",
+                    FerroIcon::Warning,
+                    warning,
+                    tr_args(
+                        "editor-decode-errors",
+                        &[("encoding", disk.format.encoding.label().into())],
+                    ),
+                )
+                .into_any_element(),
+            );
+        }
+        if disk.mixed_line_endings {
+            bars.push(
+                bar(
+                    "editor-mixed-endings",
+                    FerroIcon::Info,
+                    muted,
+                    tr_args(
+                        "editor-mixed-line-endings",
+                        &[("ending", disk.format.line_ending.label().into())],
+                    ),
+                )
+                .into_any_element(),
+            );
+        }
+        bars
     }
 
     fn render_header(

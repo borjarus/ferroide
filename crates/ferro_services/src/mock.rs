@@ -464,6 +464,23 @@ impl MockProjectService {
         .boxed()
     }
 
+    /// Store `text` as the file's content and announce the change.
+    fn write_now(&self, path: &Path, text: String) {
+        let path = norm(path);
+        let existed = self.file_text(&path).is_some();
+        lock(&self.files).insert(path.clone(), text);
+        self.emit(if existed {
+            ProjectEvent::Changed(path)
+        } else {
+            ProjectEvent::Added(path)
+        });
+    }
+
+    /// Change a file as another program would (tests, storybook).
+    pub fn modify_externally(&self, path: &Path, text: impl Into<String>) {
+        self.write_now(path, text.into());
+    }
+
     /// Notify subscribers, as a file watcher would. Used by the storybook.
     pub fn emit(&self, event: ProjectEvent) {
         let mut subscribers = self.subscribers.lock().unwrap_or_else(|e| e.into_inner());
@@ -537,6 +554,16 @@ impl ProjectService for MockProjectService {
 
     fn create(&self, path: &Path, kind: EntryKind) -> BoxFuture<'static, Result<()>> {
         self.mutate(|this| this.create_now(path, kind), "creating a file")
+    }
+
+    fn write_file(&self, path: &Path, bytes: Vec<u8>) -> BoxFuture<'static, Result<()>> {
+        self.mutate(
+            |this| {
+                this.write_now(path, String::from_utf8_lossy(&bytes).into_owned());
+                Ok(())
+            },
+            "saving a file",
+        )
     }
 
     fn rename(&self, from: &Path, to: &Path) -> BoxFuture<'static, Result<()>> {

@@ -159,3 +159,69 @@ Deviations:
 
 Tests: `default_layout_follows_zed`, `status_bar_toggles_hide_show_and_switch_tool_windows`,
 `panels_sit_in_the_zed_docks_and_can_move`, `back_and_forward_retrace_navigation`.
+
+## Stage 3 — Editor core
+
+The editor core is a new GUI-free crate, `ferro_text`. The editor tabs in
+the window still draw text through GPUI Kit's editor (as in Stage 2), with
+`ferro_text` underneath for files, saving and the text commands. Replacing
+the view itself with our own `ferro_editor` element is left for later (see
+"Deviations").
+
+| Plan item | Delivered |
+|---|---|
+| Rope, transactions, undo/redo, anchors | ✔ `ferro_text::Buffer`: versioned edits, undo/redo grouped by typing pauses (300 ms) with selections restored, `Anchor`s with left/right bias that follow edits and undo |
+| Multi-cursor: Ctrl+D, Ctrl+Shift+L, Alt+click, Ctrl+Alt+↑/↓ | ✔ `ops::select_next_occurrence` / `select_all_occurrences` / `add_cursor_vertical`, bound in every scheme; Alt+click comes from GPUI Kit |
+| Column selection, clipboard with several cursors | ✔ `ops::column_selection`, `ops::copy/cut/paste` (one piece per cursor, whole-line copy); in the window GPUI Kit's Alt+drag and clipboard are used |
+| Find / replace in file (regex) | ✔ `ferro_text::search`: plain or regex, case, whole word, `$1` / `${name}` replacements; the window keeps GPUI Kit's find bar |
+| Duplicate / move / delete lines, line and block comments | ✔ `ops::*`, actions `ferro::DuplicateLineDown/Up`, `MoveLineUp/Down`, `DeleteLine`, `ToggleLineComment`, `ToggleBlockComment`; comment syntax per language in `ferro_text::comment` until Language Packs (Stage 5) |
+| Unicode: graphemes, emoji, wide characters, basic bidi, IME, AltGr | ✔ grapheme-aware deletion and columns, display width of CJK/emoji/ZWJ sequences, base direction and visual runs (`unicode::visual_runs`); IME and AltGr input come from GPUI Kit's input handler |
+| Soft wrap, indentation, visible whitespace, tabs | ✔ `display_map` (folds, word wrap, tabs); indent/outdent ops; *Show whitespace* setting and `ferro::ToggleWhitespace`, `ferro::ToggleSoftWrap` |
+| Encoding detection, line separators | ✔ BOM → UTF-8 → UTF-16 without BOM → `chardetng`; LF / CRLF / CR detected (mixed reported); the status bar shows both and changes them (Reopen / Save with Encoding) |
+| Atomic save, autosave on focus loss, external changes | ✔ temp file + fsync + rename (permissions and symlinks kept, read-only refused); autosave on blur / window deactivation / tab close, optionally after 1 s; a changed file reloads silently when unmodified, otherwise a bar offers Reload / Compare (diff view) / Keep Mine |
+| Incremental display map, large-file mode | ✔ per-line layouts with a Fenwick tree over screen rows; files > 20 MB open without highlighting, analysis and soft wrap, > 500 MB as a read-only 4 MB preview |
+| Vim mode prepared in the action system | Partial: every text command is an action with an id and a dedicated key context (`FerroEditor > Input`) a modal layer can bind to; the modal layer itself is P2 |
+
+**Definition of Done:**
+
+| Criterion | How it is checked | Result |
+|---|---|---|
+| Property-based tests for rope and undo | `crates/ferro_text/tests/properties.rs`: buffer vs a `String` model with undo/redo through every state, anchors, incremental display map vs a fresh one, encodings, line separators, search | ✔ 7 properties, 256 cases each |
+| Fuzzing of editing operations | `ferro_text::fuzz::run` turns bytes into editor commands (typing, deletion, cursors, line ops, comments, clipboard, undo/redo, column selection) and checks invariants after each; run by proptest (96 sessions × up to 200 commands) | ✔ (see deviations for `cargo fuzz`) |
+| Typing latency within budget on a 100k-line file, weak profile | `tests/typing_latency.rs` (asserts p99 < 8 ms debug / 2 ms optimized) and `cargo run -p ferro_text --release --example typing_latency` | Core per keystroke, release, this machine: p50 4.6 µs, p99 0.82 ms (a line break rebuilds the row index, O(lines)); initial layout of 100k lines 128 ms. Weak-profile and key-to-pixel runs pending |
+
+Tests: `ferro_text` has 64 unit tests, 7 property tests and the latency
+test. `ferro_workspace/src/tests_files.rs` adds 7 headless tests (saving in
+the original format, encodings and separators, changes on disk, project
+files, closing modified tabs, line commands, Ctrl+D with typing, shortcuts).
+
+### Deviations from the plan
+
+- **The view is still GPUI Kit's editor.** It exposes only its active
+  selection, so line commands (move, duplicate, comment) act on the first
+  cursor when there are several; Select Next Occurrence keeps its own list.
+  GPUI Kit keeps its own undo stack and display map; `ferro_text`'s are used
+  by the core and its tests and are ready for `ferro_editor`.
+- **`ropey` 2.0 beta instead of 1.x**: the exact version GPUI Kit's editor
+  uses, so both share one rope type and snapshots pass without copying.
+- **No `cargo fuzz` target**: it needs a nightly toolchain; the same driver
+  runs under proptest on stable. A `cargo fuzz` target can call
+  `ferro_text::fuzz::run` unchanged.
+- **Closing a modified tab saves it** (as IntelliJ IDEA does), also with
+  autosave set to "Only on Save and when a tab closes"; there is no
+  "Save changes?" prompt.
+- **External changes** are noticed when the window regains focus and through
+  project-service events; a file watcher comes with `FsProjectService`
+  (Stage 4).
+
+### Open items
+
+- The `ferro_workspace` changes were written but not yet compiled or run on
+  the development machine: from the middle of the session, new build-script
+  executables under `target/` could not be created or started (`LNK1104`,
+  "used by another process"), most likely antivirus scanning. `ferro_text`
+  builds and passes. Next step: `cargo test --workspace` once the files are
+  allowed again.
+- Weak-profile and key-to-pixel measurements on the 100k-line file.
+- `ferro_editor`: our own view on top of `ferro_text` (true inline hints,
+  all cursors visible to commands, one undo stack).

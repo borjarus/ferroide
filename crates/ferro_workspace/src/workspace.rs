@@ -271,27 +271,54 @@ impl Workspace {
             .downcast::<T>()
     }
 
-    fn adopt_editor(&mut self, editor: Entity<EditorPanel>, cx: &mut Context<Self>) {
-        self._subscriptions.push(
-            cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
+    fn adopt_editor(
+        &mut self,
+        editor: Entity<EditorPanel>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self._subscriptions.push(cx.subscribe_in(
+            &editor,
+            window,
+            |this, editor, event: &EditorEvent, window, cx| {
                 match event {
                     EditorEvent::Activated => {
                         // Switching tabs is a navigation Back returns from;
                         // navigation through `open_location` has already
                         // made the editor active and recorded itself.
-                        if this.active_editor_entity().as_ref() != Some(&editor)
+                        if this.active_editor_entity().as_ref() != Some(editor)
                             && let Some(from) = this.current_location(cx)
                         {
                             this.push_back(from);
                         }
-                        this.mark_active_editor(&editor);
+                        this.mark_active_editor(editor);
                         crate::panels::structure::active_editor_changed(this, cx);
                     }
-                    EditorEvent::CursorMoved => {}
+                    EditorEvent::CursorMoved | EditorEvent::Saved | EditorEvent::Reloaded => {}
+                    EditorEvent::SaveFailed(message) => {
+                        window.push_notification(Notification::error(message.clone()), cx);
+                    }
+                    EditorEvent::CompareWithDisk => {
+                        let (path, texts) = {
+                            let e = editor.read(cx);
+                            (e.path().to_path_buf(), e.compare_texts(cx))
+                        };
+                        if let Some((disk, text)) = texts {
+                            let panel = crate::vcs::diff_view::DiffPanel::open_disk_and_editor(
+                                path,
+                                disk,
+                                text,
+                                this.services.clone(),
+                                cx,
+                            );
+                            this.add_center_panel(panel.clone(), window, cx);
+                            panel.focus_handle(cx).focus(window, cx);
+                        }
+                    }
                 }
                 cx.notify();
-            }),
-        );
+            },
+        ));
         self.editors.push(editor);
     }
 
@@ -320,7 +347,7 @@ impl Workspace {
         let mut center = DockLayout::tabs();
         for rel in ["src/main.rs", "src/lib.rs", "Cargo.toml"] {
             let editor = EditorPanel::open(root.join(rel), false, &self.services, window, cx);
-            self.adopt_editor(editor.clone(), cx);
+            self.adopt_editor(editor.clone(), window, cx);
             center = center.panel_view(panel_handle(editor), cx);
         }
 
@@ -393,7 +420,7 @@ impl Workspace {
             self.adopt_tool_window(tool, window, cx);
         }
         for editor in editors {
-            self.adopt_editor(editor, cx);
+            self.adopt_editor(editor, window, cx);
         }
         if let Some(last) = self.editors.last().cloned() {
             self.active_editor = Some(last.downgrade());
@@ -408,8 +435,14 @@ impl Workspace {
             .filter_map(|p| area.layout(*p))
             .flat_map(|tree| tree.panels().collect::<Vec<_>>())
             .collect();
-        self.editors
-            .retain(|e| alive.contains(&PanelId::from(e.entity_id())));
+        // A tab closed with its close button keeps its edits: save it.
+        let (kept, closed): (Vec<_>, Vec<_>) = std::mem::take(&mut self.editors)
+            .into_iter()
+            .partition(|e| alive.contains(&PanelId::from(e.entity_id())));
+        self.editors = kept;
+        for editor in closed {
+            save_if_dirty(&editor, cx);
+        }
         if self
             .active_editor
             .as_ref()
@@ -809,7 +842,7 @@ impl Workspace {
                 e.go_to(position, window, cx);
             }
         });
-        self.adopt_editor(editor.clone(), cx);
+        self.adopt_editor(editor.clone(), window, cx);
         let id = PanelId::from(editor.entity_id());
         area.update(cx, |area, cx| {
             area.add_panel_view(
@@ -964,6 +997,7 @@ impl Workspace {
             return;
         }
         let editor = editor.clone();
+        save_if_dirty(&editor, cx);
         let path = editor.read(cx).path().to_path_buf();
         self.closed_tabs.retain(|p| *p != path);
         self.closed_tabs.push(path);
@@ -1096,7 +1130,7 @@ impl Workspace {
         };
         let path = editor.read(cx).path().to_path_buf();
         let copy = EditorPanel::open(path, false, &self.services, window, cx);
-        self.adopt_editor(copy.clone(), cx);
+        self.adopt_editor(copy.clone(), window, cx);
         let id = PanelId::from(copy.entity_id());
         self.dock_area.update(cx, |area, cx| {
             area.add_panel_view(
@@ -1289,8 +1323,29 @@ impl Workspace {
         }
     }
 
+    /// Save the active editor (File → Save).
+    pub fn save_active(&mut self, cx: &mut Context<Self>) {
+        if let Some(editor) = self.active_editor_entity() {
+            editor.update(cx, |e, cx| e.save(cx).detach());
+        }
+    }
+
+    /// Save every modified editor (File → Save All).
+    pub fn save_all(&mut self, cx: &mut Context<Self>) {
+        for editor in self.editors.clone() {
+            save_if_dirty(&editor, cx);
+        }
+    }
+
     pub(crate) fn notify_info(&self, key: &str, window: &mut Window, cx: &mut App) {
         window.push_notification(Notification::info(tr(key)), cx);
+    }
+}
+
+/// Save `editor` if it has unsaved changes.
+fn save_if_dirty(editor: &Entity<EditorPanel>, cx: &mut App) {
+    if editor.read(cx).is_dirty() {
+        editor.update(cx, |e, cx| e.save(cx).detach());
     }
 }
 
@@ -1391,6 +1446,46 @@ impl Render for Workspace {
                 if let Some(path) = path {
                     this.reveal_in_project(path, window, cx)
                 }
+            }))
+            .on_action(cx.listener(|this, _: &Save, _, cx| this.save_active(cx)))
+            .on_action(cx.listener(|this, _: &SaveAll, _, cx| this.save_all(cx)))
+            .on_action(cx.listener(|this, _: &ReloadFromDisk, window, cx| {
+                if let Some(editor) = this.active_editor_entity() {
+                    editor.update(cx, |e, cx| e.reload(window, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &DuplicateLineDown, window, cx| {
+                this.editor_command(EditorCommand::DuplicateLineDown, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &DuplicateLineUp, window, cx| {
+                this.editor_command(EditorCommand::DuplicateLineUp, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &MoveLineUp, window, cx| {
+                this.editor_command(EditorCommand::MoveLineUp, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &MoveLineDown, window, cx| {
+                this.editor_command(EditorCommand::MoveLineDown, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &DeleteLine, window, cx| {
+                this.editor_command(EditorCommand::DeleteLine, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleLineComment, window, cx| {
+                this.editor_command(EditorCommand::ToggleLineComment, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleBlockComment, window, cx| {
+                this.editor_command(EditorCommand::ToggleBlockComment, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &SelectNextOccurrence, window, cx| {
+                this.editor_command(EditorCommand::SelectNextOccurrence, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &SelectAllOccurrences, window, cx| {
+                this.editor_command(EditorCommand::SelectAllOccurrences, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &AddCursorAbove, window, cx| {
+                this.editor_command(EditorCommand::AddCursorAbove, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &AddCursorBelow, window, cx| {
+                this.editor_command(EditorCommand::AddCursorBelow, window, cx)
             }))
             .on_action(cx.listener(|this, _: &TriggerCompletion, window, cx| {
                 this.editor_command(EditorCommand::TriggerCompletion, window, cx)

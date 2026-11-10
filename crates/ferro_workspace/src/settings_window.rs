@@ -84,6 +84,8 @@ pub enum SettingKey {
     Breadcrumbs,
     VcsMarkers,
     PreviewTabs,
+    Autosave,
+    ShowWhitespace,
     KeymapScheme,
     VimMode,
 }
@@ -110,7 +112,7 @@ pub enum SettingValue {
 }
 
 impl SettingKey {
-    pub const ALL: [SettingKey; 17] = [
+    pub const ALL: [SettingKey; 19] = [
         SettingKey::Theme,
         SettingKey::UiFontSize,
         SettingKey::Compact,
@@ -126,6 +128,8 @@ impl SettingKey {
         SettingKey::Breadcrumbs,
         SettingKey::VcsMarkers,
         SettingKey::PreviewTabs,
+        SettingKey::Autosave,
+        SettingKey::ShowWhitespace,
         SettingKey::KeymapScheme,
         SettingKey::VimMode,
     ];
@@ -158,6 +162,8 @@ impl SettingKey {
             Breadcrumbs => "breadcrumbs",
             VcsMarkers => "vcs-markers",
             PreviewTabs => "preview-tabs",
+            Autosave => "autosave",
+            ShowWhitespace => "show-whitespace",
             KeymapScheme => "keymap-scheme",
             VimMode => "vim-mode",
         }
@@ -183,6 +189,17 @@ impl SettingKey {
                 Locale::ALL
                     .iter()
                     .map(|l| (l.code(), SharedString::from(l.native_name())))
+                    .collect(),
+            ),
+            Autosave => FieldKind::Choice(
+                ferro_settings::Autosave::ALL
+                    .iter()
+                    .map(|a| {
+                        (
+                            a.id(),
+                            tr(&format!("settings-autosave-{}", a.id().replace('_', "-"))),
+                        )
+                    })
                     .collect(),
             ),
             KeymapScheme => FieldKind::Choice(
@@ -234,6 +251,8 @@ impl SettingKey {
             Breadcrumbs => Bool(s.editor.breadcrumbs),
             VcsMarkers => Bool(s.editor.vcs_markers),
             PreviewTabs => Bool(s.editor.preview_tabs),
+            Autosave => Choice(s.editor.autosave.id().to_string()),
+            ShowWhitespace => Bool(s.editor.show_whitespace),
             KeymapScheme => Choice(preset_id(s.keymap.base).to_string()),
             VimMode => Bool(s.keymap.vim_mode),
         }
@@ -270,6 +289,12 @@ impl SettingKey {
             (Breadcrumbs, SettingValue::Bool(b)) => s.editor.breadcrumbs = b,
             (VcsMarkers, SettingValue::Bool(b)) => s.editor.vcs_markers = b,
             (PreviewTabs, SettingValue::Bool(b)) => s.editor.preview_tabs = b,
+            (Autosave, SettingValue::Choice(v)) => {
+                if let Some(mode) = ferro_settings::Autosave::from_id(&v) {
+                    s.editor.autosave = mode;
+                }
+            }
+            (ShowWhitespace, SettingValue::Bool(b)) => s.editor.show_whitespace = b,
             (KeymapScheme, SettingValue::Choice(v)) => {
                 if let Some(preset) = KeymapPreset::ALL.into_iter().find(|p| preset_id(*p) == v) {
                     s.keymap.base = preset;

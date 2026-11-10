@@ -70,6 +70,15 @@ pub trait ProjectService: Send + Sync + 'static {
     /// Direct children of `dir`, directories first, then by name.
     fn children(&self, dir: &Path) -> BoxFuture<'static, Result<Vec<Entry>>>;
     fn read_file(&self, path: &Path) -> BoxFuture<'static, Result<String>>;
+    /// The file's raw bytes, for detecting its encoding. The default reads
+    /// the text as UTF-8.
+    fn read_bytes(&self, path: &Path) -> BoxFuture<'static, Result<Vec<u8>>> {
+        let read = self.read_file(path);
+        Box::pin(async move { read.await.map(String::into_bytes) })
+    }
+    /// Replace the file's content (atomically in a real file system),
+    /// creating it if needed.
+    fn write_file(&self, path: &Path, bytes: Vec<u8>) -> BoxFuture<'static, Result<()>>;
     /// Added/removed/changed notifications.
     fn subscribe(&self) -> async_channel::Receiver<ProjectEvent>;
     /// Create an empty file, or a directory, at `path`.
@@ -396,10 +405,19 @@ impl Services {
     /// All-mock services for the demo project. `config` controls latency,
     /// failure rate and the size of the synthetic stress tree.
     pub fn mock(config: mock::MockConfig) -> Self {
+        Self::mock_with_project(config).0
+    }
+
+    /// [`Services::mock`], also handing out the mock project so tests and
+    /// the storybook can change files "on disk" behind the editor's back.
+    pub fn mock_with_project(
+        config: mock::MockConfig,
+    ) -> (Self, std::sync::Arc<mock::MockProjectService>) {
         use std::sync::Arc;
         let project = Arc::new(mock::MockProjectService::demo(config.clone()));
         let root = project.root().to_path_buf();
-        Self {
+        let mock_project = project.clone();
+        let services = Self {
             recent: Arc::new(mock::MockRecentProjects::new(config.seed)),
             vcs: Arc::new(mock::MockVcsService::new(config.clone(), project.clone())),
             run: Arc::new(mock::MockRunService::new(root.clone())),
@@ -415,6 +433,7 @@ impl Services {
             terminal: Arc::new(mock::MockTerminalService::new(root)),
             status: Arc::new(mock::MockStatusService::new(config)),
             project,
-        }
+        };
+        (services, mock_project)
     }
 }

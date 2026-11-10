@@ -6,10 +6,14 @@
 //! end.
 
 use ferro_services::{RunState, ServerHealth};
+use ferro_text::{
+    encoding::{TextEncoding, common_encodings},
+    line_ending::LineEnding,
+};
 use ferro_ui::{FerroIcon, components, tr, tr_args};
 use gpui_kit::{
     AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    Styled as _, Window,
+    Styled as _, WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, TitleBar,
         button::{Button, ButtonVariants as _},
@@ -24,7 +28,10 @@ use gpui_kit::{
 use gpui_kit::component::dock::DockPlacement;
 
 use crate::{
-    actions::*, app_state::AppState, editor::language_display, tool_window::ToolWindowKind,
+    actions::*,
+    app_state::AppState,
+    editor::{EditorPanel, language_display},
+    tool_window::ToolWindowKind,
     workspace::Workspace,
 };
 
@@ -451,6 +458,12 @@ impl Workspace {
             None => (None, None),
         };
         let problems = editor.as_ref().map(|e| e.read(cx).problem_counts());
+        // The active file's line separator and encoding, changeable from
+        // the status bar.
+        let format = editor.as_ref().map(|e| {
+            let format = e.read(cx).disk().format;
+            (format.line_ending, format.encoding, e.downgrade())
+        });
         let indent = tr_args(
             "editor-status-indent",
             &[("size", AppState::settings(cx).editor.tab_size.into())],
@@ -528,13 +541,10 @@ impl Workspace {
                     components::status_item("status-cursor", cursor).tooltip(tr("status-cursor")),
                 )
             })
-            .child(
-                components::status_item("status-line-sep", "LF")
-                    .tooltip(tr("status-line-separator")),
-            )
-            .child(
-                components::status_item("status-encoding", "UTF-8").tooltip(tr("status-encoding")),
-            )
+            .when_some(format, |el, (line_ending, encoding, weak)| {
+                el.child(line_ending_menu(line_ending, weak.clone()))
+                    .child(encoding_menu(encoding, weak))
+            })
             .child(components::status_item("status-indent", indent).tooltip(tr("status-indent")))
             .when_some(language, |el, language| {
                 el.child(
@@ -555,6 +565,77 @@ impl Workspace {
             // Right: bottom- and right-dock toggles.
             .child(h_flex().id("status-right-docks").children(right_toggles))
     }
+}
+
+/// Status bar item showing the file's line separator; its menu changes it
+/// (and saves the file).
+fn line_ending_menu(current: LineEnding, editor: WeakEntity<EditorPanel>) -> impl IntoElement {
+    components::status_item("status-line-sep", current.label())
+        .tooltip(tr("status-line-separator"))
+        .dropdown_menu(move |mut menu, _, _| {
+            menu = menu.label(tr("status-line-separator-menu"));
+            for ending in LineEnding::ALL {
+                let editor = editor.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(ending.label())
+                        .checked(ending == current)
+                        .on_click(move |_, _, cx| {
+                            let _ = editor.update(cx, |e, cx| e.set_line_ending(ending, cx));
+                        }),
+                );
+            }
+            menu
+        })
+}
+
+/// Status bar item showing the file's encoding; its menu reopens the file
+/// in another encoding or saves it in one.
+fn encoding_menu(current: TextEncoding, editor: WeakEntity<EditorPanel>) -> impl IntoElement {
+    components::status_item("status-encoding", current.label())
+        .tooltip(tr("status-encoding"))
+        .dropdown_menu(move |menu, window, cx| {
+            let reopen = editor.clone();
+            let save = editor.clone();
+            menu.submenu(
+                tr("status-encoding-reopen"),
+                window,
+                cx,
+                move |mut sub, _, _| {
+                    for encoding in common_encodings() {
+                        let editor = reopen.clone();
+                        sub = sub.item(
+                            PopupMenuItem::new(encoding.label())
+                                .checked(encoding == current)
+                                .on_click(move |_, window, cx| {
+                                    let _ = editor.update(cx, |e, cx| {
+                                        e.reopen_with_encoding(encoding, window, cx)
+                                    });
+                                }),
+                        );
+                    }
+                    sub
+                },
+            )
+            .submenu(
+                tr("status-encoding-save"),
+                window,
+                cx,
+                move |mut sub, _, _| {
+                    for encoding in common_encodings() {
+                        let editor = save.clone();
+                        sub = sub.item(
+                            PopupMenuItem::new(encoding.label())
+                                .checked(encoding == current)
+                                .on_click(move |_, _, cx| {
+                                    let _ = editor
+                                        .update(cx, |e, cx| e.save_with_encoding(encoding, cx));
+                                }),
+                        );
+                    }
+                    sub
+                },
+            )
+        })
 }
 
 #[cfg(test)]

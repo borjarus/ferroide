@@ -4,11 +4,12 @@ One universal IDE for every popular language — IntelliJ IDEA's ergonomics
 with Zed's speed — written entirely in Rust with a GPU-rendered interface,
 for Linux, Windows and macOS, including weaker computers.
 
-> **Status: Stage 1 of 14.** The complete IDE window runs on mock services:
-> dock, tool windows, editor tabs and splits, main toolbar, status bar, Find
-> Action, menus, themes, Polish and English. Real file system, language
-> servers, Git and the debugger arrive in later stages — see the
-> [plan](docs/FerroIDE_plan.md) and [status](docs/STATUS.md).
+> **Status: Stage 3 of 14.** The complete IDE window runs on mock services,
+> and the editor core (`ferro_text`) reads and saves real files in any
+> common encoding and line separator, with multi-cursor and line commands.
+> Real project scanning, language servers, Git and the debugger arrive in
+> later stages — see the [plan](docs/FerroIDE_plan.md) and
+> [status](docs/STATUS.md).
 
 ## Try it
 
@@ -34,6 +35,8 @@ crates/
   ferro_workspace/  window, dock, tool windows, editor tabs, toolbar, status bar
   ferro_ui/         themes, icons, shared components
   ferro_services/   service traits + mock implementations
+  ferro_text/       editor core: rope, undo, anchors, selections, edits,
+                    search, display map, encodings, atomic saving (no GUI)
   ferro_keymap/     action catalog and keymaps (no GUI)
   ferro_settings/   settings and persisted UI state (no GUI)
   ferro_i18n/       Fluent localization (no GUI)

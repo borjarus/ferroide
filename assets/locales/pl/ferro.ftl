@@ -3,6 +3,7 @@
 
 ## Menu
 menu-file = Plik
+menu-edit = Edycja
 menu-view = Widok
 menu-window = Okno
 menu-run = Uruchom
@@ -33,6 +34,9 @@ action-open-project = Otwórz…
 action-get-from-vcs = Pobierz z VCS…
 action-close-project = Zamknij projekt
 action-new-window = Nowe okno
+action-save = Zapisz
+action-save-all = Zapisz wszystko
+action-reload-from-disk = Wczytaj ponownie z dysku
 action-open-settings = Ustawienia…
 action-quit = Zakończ
 action-find-action = Znajdź akcję…
@@ -64,6 +68,19 @@ action-next-tab = Następna karta
 action-previous-tab = Poprzednia karta
 action-split-right = Podziel w prawo
 action-split-down = Podziel w dół
+action-duplicate-line-down = Kopiuj wiersz w dół
+action-duplicate-line-up = Kopiuj wiersz w górę
+action-move-line-up = Przenieś wiersz w górę
+action-move-line-down = Przenieś wiersz w dół
+action-delete-line = Usuń wiersz
+action-toggle-line-comment = Przełącz komentarz wiersza
+action-toggle-block-comment = Przełącz komentarz blokowy
+action-select-next-occurrence = Dodaj zaznaczenie następnego wystąpienia
+action-select-all-occurrences = Zaznacz wszystkie wystąpienia
+action-add-cursor-above = Dodaj kursor powyżej
+action-add-cursor-below = Dodaj kursor poniżej
+action-toggle-soft-wrap = Przełącz miękkie zawijanie
+action-toggle-whitespace = Przełącz białe znaki
 action-run = Uruchom
 action-debug = Debuguj
 action-stop = Zatrzymaj

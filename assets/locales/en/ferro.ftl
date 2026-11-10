@@ -3,6 +3,7 @@
 
 ## Menus
 menu-file = File
+menu-edit = Edit
 menu-view = View
 menu-window = Window
 menu-run = Run
@@ -33,6 +34,9 @@ action-open-project = Open…
 action-get-from-vcs = Get from VCS…
 action-close-project = Close Project
 action-new-window = New Window
+action-save = Save
+action-save-all = Save All
+action-reload-from-disk = Reload from Disk
 action-open-settings = Settings…
 action-quit = Exit
 action-find-action = Find Action…
@@ -64,6 +68,19 @@ action-next-tab = Select Next Tab
 action-previous-tab = Select Previous Tab
 action-split-right = Split Right
 action-split-down = Split Down
+action-duplicate-line-down = Copy Line Down
+action-duplicate-line-up = Copy Line Up
+action-move-line-up = Move Line Up
+action-move-line-down = Move Line Down
+action-delete-line = Delete Line
+action-toggle-line-comment = Toggle Line Comment
+action-toggle-block-comment = Toggle Block Comment
+action-select-next-occurrence = Add Selection to Next Occurrence
+action-select-all-occurrences = Select All Occurrences
+action-add-cursor-above = Add Cursor Above
+action-add-cursor-below = Add Cursor Below
+action-toggle-soft-wrap = Toggle Soft Wrap
+action-toggle-whitespace = Toggle Whitespace
 action-run = Run
 action-debug = Debug
 action-stop = Stop

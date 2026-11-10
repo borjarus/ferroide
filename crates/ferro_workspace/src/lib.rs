@@ -22,6 +22,8 @@ mod tests;
 #[cfg(test)]
 mod tests_editor;
 #[cfg(test)]
+mod tests_files;
+#[cfg(test)]
 mod tests_panels;
 #[cfg(test)]
 mod tests_search;

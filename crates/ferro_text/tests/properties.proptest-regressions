@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc baac3b6b5e694ef5d523ae54e238df551b75e6dc9305962ca50d68b5fdd4da07 # shrinks to initial = "", steps = [[(0.0, 0.0, "👨\u{200d}👩\u{200d}👧")]], wrap = None, tab_size = 1
+cc 1868b30ee6a454d6b7ba3f9f0eb51b40e11fc70d9924c24561fa4598a7de432e # shrinks to data = [71, 18, 4, 89, 120, 13, 4, 24, 31, 17, 60, 150, 77, 67, 129, 129, 161, 247, 0, 0, 20, 108, 72, 0, 120, 0, 0, 0, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 52, 10, 48, 26, 100, 118, 0, 0, 0, 0, 0, 7, 63, 100, 67]
+cc 45ae7215bba068675f6e4fec99ecceeee5083f3d091a9a06afcc231b11948c1e # shrinks to initial = "", steps = [[(0.0, 0.0, "")]]
+cc 52f3dffeb458f87bcb9c7d53ea4a30b16c8a1f371561f7d9444f42ac8701593f # shrinks to data = [0, 124, 204, 128, 88, 0, 40, 0, 68, 0, 18, 28, 22, 0, 0, 0, 1, 26, 0, 9, 4, 0, 0, 47, 7, 0, 0, 78, 0, 0, 0, 0, 28, 183, 28, 89, 189, 64, 0, 0, 119, 43, 57, 9, 33, 120, 25, 7, 0, 0, 103, 0, 0, 55, 0, 0, 24, 122, 175, 84, 58, 207, 42, 143, 103, 131, 255, 245, 41, 150, 162, 177, 123, 67, 22, 83, 16, 107, 158, 211, 86, 127, 21, 55, 79, 171, 95, 106, 218, 251, 168, 31, 74, 93, 23, 99, 192, 49, 175, 84, 176, 18, 150, 238, 114, 70, 184, 239, 215, 192, 226, 151, 254, 35, 224, 237, 234, 93, 235, 128, 244, 33, 211, 242, 249, 101, 100, 217, 76, 197, 171, 127, 54, 225, 209, 44, 200, 9]
+cc 3c2bc5a2dd888ec1d4ec88e23882e33a1e8bc00d06dae81ca0cffe918c78fc3d # shrinks to initial = "漢字aa aa zażółćzażółć\n\n\n aaa   漢字", steps = [[(0.8701920830682045, 0.1767945960794996, "\ne\u{301}zażółć👨\u{200d}👩\u{200d}👧👨\u{200d}👩\u{200d}👧zażółće\u{301}"), (0.4314797489880564, 0.11323335349245896, "")], [(0.42269357457859236, 0.0, "\n"), (0.011143118745329859, 0.28357008297096864, "\n")]], wrap = Some(3), tab_size = 1

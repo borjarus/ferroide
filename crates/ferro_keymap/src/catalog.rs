@@ -87,6 +87,9 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     a("ferro::GetFromVcs", "action-get-from-vcs", File),
     a("ferro::CloseProject", "action-close-project", File),
     a("ferro::NewWindow", "action-new-window", File),
+    a("ferro::Save", "action-save", File),
+    a("ferro::SaveAll", "action-save-all", File),
+    a("ferro::ReloadFromDisk", "action-reload-from-disk", File),
     a("ferro::OpenSettings", "action-open-settings", File),
     a("ferro::OpenSettingsFile", "action-open-settings-file", File),
     a(
@@ -213,6 +216,44 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     a("ferro::PreviousTab", "action-previous-tab", Editor),
     a("ferro::SplitRight", "action-split-right", Editor),
     a("ferro::SplitDown", "action-split-down", Editor),
+    // Text editing
+    a(
+        "ferro::DuplicateLineDown",
+        "action-duplicate-line-down",
+        Editor,
+    ),
+    a("ferro::DuplicateLineUp", "action-duplicate-line-up", Editor),
+    a("ferro::MoveLineUp", "action-move-line-up", Editor),
+    a("ferro::MoveLineDown", "action-move-line-down", Editor),
+    a("ferro::DeleteLine", "action-delete-line", Editor),
+    a(
+        "ferro::ToggleLineComment",
+        "action-toggle-line-comment",
+        Editor,
+    ),
+    a(
+        "ferro::ToggleBlockComment",
+        "action-toggle-block-comment",
+        Editor,
+    ),
+    a(
+        "ferro::SelectNextOccurrence",
+        "action-select-next-occurrence",
+        Editor,
+    ),
+    a(
+        "ferro::SelectAllOccurrences",
+        "action-select-all-occurrences",
+        Editor,
+    ),
+    a("ferro::AddCursorAbove", "action-add-cursor-above", Editor),
+    a("ferro::AddCursorBelow", "action-add-cursor-below", Editor),
+    a("ferro::ToggleSoftWrap", "action-toggle-soft-wrap", Editor),
+    a(
+        "ferro::ToggleWhitespace",
+        "action-toggle-whitespace",
+        Editor,
+    ),
     // Run
     a("ferro::Run", "action-run", Run),
     a("ferro::Debug", "action-debug", Run),

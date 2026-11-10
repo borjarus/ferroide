@@ -177,6 +177,12 @@ fn register_app_actions(cx: &mut App) {
     cx.on_action(|_: &ZoomInUi, cx| zoom_ui(Some(1.0), cx));
     cx.on_action(|_: &ZoomOutUi, cx| zoom_ui(Some(-1.0), cx));
     cx.on_action(|_: &ResetUiZoom, cx| zoom_ui(None, cx));
+    cx.on_action(|_: &ToggleSoftWrap, cx| {
+        AppState::update_settings(cx, |s| s.editor.soft_wrap = !s.editor.soft_wrap);
+    });
+    cx.on_action(|_: &ToggleWhitespace, cx| {
+        AppState::update_settings(cx, |s| s.editor.show_whitespace = !s.editor.show_whitespace);
+    });
     cx.on_action(|_: &ToggleCompactMode, cx| {
         AppState::update_settings(cx, |s| s.appearance.compact = !s.appearance.compact);
     });

@@ -121,6 +121,15 @@ pub struct Binding {
 /// Key context set by the workspace root element.
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
 
+/// Key context set around the text of an editor tab.
+pub const EDITOR_CONTEXT: &str = "FerroEditor";
+
+/// Context of text-editing bindings: the text input inside an editor tab.
+/// It is as deep as GPUI Kit's own `Input` bindings, so a scheme's binding
+/// wins over the kit's for the same keystroke, and it does not fire in
+/// other inputs (Quick Open, search fields).
+pub const EDITOR_INPUT_CONTEXT: &str = "FerroEditor > Input";
+
 /// Replace `ctrl` with `cmd` in every stroke of a keystroke sequence.
 fn ctrl_to_cmd(keystrokes: &str) -> String {
     keystrokes

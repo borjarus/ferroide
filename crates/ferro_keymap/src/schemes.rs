@@ -4,13 +4,22 @@
 //! Sources: the published default keymaps of VS Code, IntelliJ IDEA, Zed,
 //! Sublime Text and GNU Emacs, restricted to the actions FerroIDE has.
 
-use crate::Binding;
+use crate::{Binding, EDITOR_INPUT_CONTEXT};
 
 const fn b(keystrokes: &'static str, action: &'static str) -> Binding {
     Binding {
         keystrokes,
         action,
         context: None,
+    }
+}
+
+/// A text-editing binding, active only in an editor tab's text.
+const fn e(keystrokes: &'static str, action: &'static str) -> Binding {
+    Binding {
+        keystrokes,
+        action,
+        context: Some(EDITOR_INPUT_CONTEXT),
     }
 }
 
@@ -76,6 +85,20 @@ pub(crate) const VSCODE: &[Binding] = &[
     b("ctrl-=", "ferro::ZoomInUi"),
     b("ctrl--", "ferro::ZoomOutUi"),
     b("ctrl-q", "ferro::Quit"),
+    b("ctrl-s", "ferro::Save"),
+    b("ctrl-k s", "ferro::SaveAll"),
+    b("alt-z", "ferro::ToggleSoftWrap"),
+    e("shift-alt-down", "ferro::DuplicateLineDown"),
+    e("shift-alt-up", "ferro::DuplicateLineUp"),
+    e("alt-up", "ferro::MoveLineUp"),
+    e("alt-down", "ferro::MoveLineDown"),
+    e("ctrl-shift-k", "ferro::DeleteLine"),
+    e("ctrl-/", "ferro::ToggleLineComment"),
+    e("shift-alt-a", "ferro::ToggleBlockComment"),
+    e("ctrl-d", "ferro::SelectNextOccurrence"),
+    e("ctrl-shift-l", "ferro::SelectAllOccurrences"),
+    e("ctrl-alt-up", "ferro::AddCursorAbove"),
+    e("ctrl-alt-down", "ferro::AddCursorBelow"),
 ];
 
 pub(crate) const VSCODE_MAC: MacRule = MacRule::CtrlToCmd {
@@ -149,6 +172,17 @@ pub(crate) const JETBRAINS: &[Binding] = &[
     b("ctrl-=", "ferro::ZoomInUi"),
     b("ctrl--", "ferro::ZoomOutUi"),
     b("ctrl-alt-0", "ferro::ResetUiZoom"),
+    // Files and text editing
+    b("ctrl-s", "ferro::SaveAll"),
+    b("ctrl-alt-y", "ferro::ReloadFromDisk"),
+    e("ctrl-d", "ferro::DuplicateLineDown"),
+    e("alt-shift-up", "ferro::MoveLineUp"),
+    e("alt-shift-down", "ferro::MoveLineDown"),
+    e("ctrl-y", "ferro::DeleteLine"),
+    e("ctrl-/", "ferro::ToggleLineComment"),
+    e("ctrl-shift-/", "ferro::ToggleBlockComment"),
+    e("alt-j", "ferro::SelectNextOccurrence"),
+    e("ctrl-alt-shift-j", "ferro::SelectAllOccurrences"),
 ];
 
 pub(crate) const JETBRAINS_MAC: MacRule = MacRule::Explicit(&[
@@ -194,6 +228,16 @@ pub(crate) const JETBRAINS_MAC: MacRule = MacRule::Explicit(&[
     b("cmd--", "ferro::ZoomOutUi"),
     b("cmd-alt-0", "ferro::ResetUiZoom"),
     b("cmd-q", "ferro::Quit"),
+    b("cmd-s", "ferro::SaveAll"),
+    b("cmd-alt-y", "ferro::ReloadFromDisk"),
+    e("cmd-d", "ferro::DuplicateLineDown"),
+    e("alt-shift-up", "ferro::MoveLineUp"),
+    e("alt-shift-down", "ferro::MoveLineDown"),
+    e("cmd-backspace", "ferro::DeleteLine"),
+    e("cmd-/", "ferro::ToggleLineComment"),
+    e("cmd-alt-/", "ferro::ToggleBlockComment"),
+    e("ctrl-g", "ferro::SelectNextOccurrence"),
+    e("ctrl-cmd-g", "ferro::SelectAllOccurrences"),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -243,6 +287,18 @@ pub(crate) const ZED: &[Binding] = &[
     b("ctrl--", "ferro::ZoomOutUi"),
     b("ctrl-0", "ferro::ResetUiZoom"),
     b("ctrl-q", "ferro::Quit"),
+    b("ctrl-s", "ferro::Save"),
+    b("ctrl-alt-s", "ferro::SaveAll"),
+    e("alt-shift-down", "ferro::DuplicateLineDown"),
+    e("alt-shift-up", "ferro::DuplicateLineUp"),
+    e("alt-up", "ferro::MoveLineUp"),
+    e("alt-down", "ferro::MoveLineDown"),
+    e("ctrl-shift-k", "ferro::DeleteLine"),
+    e("ctrl-/", "ferro::ToggleLineComment"),
+    e("ctrl-d", "ferro::SelectNextOccurrence"),
+    e("ctrl-shift-l", "ferro::SelectAllOccurrences"),
+    e("ctrl-alt-up", "ferro::AddCursorAbove"),
+    e("ctrl-alt-down", "ferro::AddCursorBelow"),
 ];
 
 pub(crate) const ZED_MAC: MacRule = MacRule::CtrlToCmd {
@@ -287,11 +343,29 @@ pub(crate) const SUBLIME: &[Binding] = &[
     b("ctrl-=", "ferro::ZoomInUi"),
     b("ctrl--", "ferro::ZoomOutUi"),
     b("ctrl-q", "ferro::Quit"),
+    b("ctrl-s", "ferro::Save"),
+    e("ctrl-shift-d", "ferro::DuplicateLineDown"),
+    e("ctrl-shift-up", "ferro::MoveLineUp"),
+    e("ctrl-shift-down", "ferro::MoveLineDown"),
+    e("ctrl-shift-k", "ferro::DeleteLine"),
+    e("ctrl-/", "ferro::ToggleLineComment"),
+    e("ctrl-shift-/", "ferro::ToggleBlockComment"),
+    e("ctrl-d", "ferro::SelectNextOccurrence"),
+    e("alt-f3", "ferro::SelectAllOccurrences"),
+    e("ctrl-alt-up", "ferro::AddCursorAbove"),
+    e("ctrl-alt-down", "ferro::AddCursorBelow"),
 ];
 
 pub(crate) const SUBLIME_MAC: MacRule = MacRule::CtrlToCmd {
     keep: &["ctrl-`", "ctrl-g", "ctrl-space"],
     overrides: &[
+        // Sublime Text's macOS keymap differs here; plain ctrl to cmd would
+        // take the system's select-to-start and select-to-end keys.
+        e("ctrl-cmd-up", "ferro::MoveLineUp"),
+        e("ctrl-cmd-down", "ferro::MoveLineDown"),
+        e("ctrl-shift-up", "ferro::AddCursorAbove"),
+        e("ctrl-shift-down", "ferro::AddCursorBelow"),
+        e("ctrl-cmd-g", "ferro::SelectAllOccurrences"),
         b("cmd-alt-right", "ferro::NextTab"),
         b("cmd-alt-left", "ferro::PreviousTab"),
         b("cmd-alt-2", "ferro::SplitRight"),
@@ -326,6 +400,9 @@ pub(crate) const EMACS: &[Binding] = &[
     b("ctrl-c ctrl-k", "ferro::Stop"),
     b("ctrl-c ctrl-b", "ferro::ToggleBreakpoint"),
     b("ctrl-x ctrl-c", "ferro::Quit"),
+    b("ctrl-x ctrl-s", "ferro::Save"),
+    b("ctrl-x s", "ferro::SaveAll"),
+    e("alt-;", "ferro::ToggleLineComment"),
 ];
 
 pub(crate) const EMACS_MAC: MacRule = MacRule::Same;

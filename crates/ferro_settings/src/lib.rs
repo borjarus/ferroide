@@ -104,6 +104,41 @@ pub struct EditorSettings {
     pub vcs_markers: bool,
     /// A single click opens a preview tab, replaced by the next one.
     pub preview_tabs: bool,
+    /// When modified files are saved without an explicit Save.
+    pub autosave: Autosave,
+    /// Draw spaces and tabs as dots and arrows.
+    pub show_whitespace: bool,
+}
+
+/// When the editor saves modified files by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Autosave {
+    /// Only Save / Save All write files.
+    Off,
+    /// When the editor or the window loses focus, and when a tab closes
+    /// (as IntelliJ IDEA does).
+    #[default]
+    OnFocusChange,
+    /// Also one second after typing stops.
+    AfterDelay,
+}
+
+impl Autosave {
+    pub const ALL: [Autosave; 3] = [Autosave::Off, Autosave::OnFocusChange, Autosave::AfterDelay];
+
+    /// Stable id, as written in `settings.toml`.
+    pub fn id(self) -> &'static str {
+        match self {
+            Autosave::Off => "off",
+            Autosave::OnFocusChange => "on_focus_change",
+            Autosave::AfterDelay => "after_delay",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.id() == id)
+    }
 }
 
 impl Default for Settings {
@@ -141,6 +176,8 @@ impl Default for EditorSettings {
             breadcrumbs: true,
             vcs_markers: true,
             preview_tabs: true,
+            autosave: Autosave::default(),
+            show_whitespace: false,
         }
     }
 }

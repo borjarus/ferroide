@@ -5,26 +5,33 @@
 //! the plan's "Editor — view layer" asks for, fed by the mock services:
 //! diagnostics, quick fixes, parameter info, VCS change markers, a glyph
 //! margin with breakpoints and ▶ run icons, breadcrumbs, sticky lines,
-//! inlay hints and the editor toolbar. The production editor
-//! (`ferro_editor`, Stage 3) replaces the body without changing the tab,
-//! split and persistence behavior here.
+//! inlay hints and the editor toolbar.
+//!
+//! Stage 3 puts the editor core of `ferro_text` underneath: files are read
+//! in any encoding and line separator and saved back atomically in the same
+//! format ([`document`]), modified tabs are marked and saved automatically,
+//! changes made by other programs are noticed, large files open in a
+//! reduced mode, and the text commands (Ctrl+D, line moves, comments…) are
+//! computed by `ferro_text::ops` ([`editing`]).
 
+pub mod document;
+mod editing;
 pub mod model;
 pub mod providers;
 mod view;
 
 use std::{
-    future::Future,
+    ops::Range,
     path::{Path, PathBuf},
-    pin::Pin,
     time::Duration,
 };
 
 use ferro_services::{
-    Breakpoint, DebugEvent, Diagnostic, InlayHint, LineChange, LineChangeKind, Runnable, Services,
-    Severity, SignatureHelp, Symbol, TextPos, TextRange,
+    Breakpoint, DebugEvent, Diagnostic, InlayHint, LineChange, LineChangeKind, ProjectEvent,
+    Runnable, Services, Severity, SignatureHelp, Symbol, TextPos, TextRange,
 };
-use ferro_settings::EditorSettings;
+use ferro_settings::{Autosave, EditorSettings};
+use ferro_text::{Rope, encoding::TextEncoding, line_ending::LineEnding};
 use ferro_ui::{FerroIcon, components, tr};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -47,6 +54,7 @@ use gpui_kit::{
 use serde::{Deserialize, Serialize};
 
 use crate::app_state::AppState;
+use document::{DiskInfo, DiskState, Loaded, SaveError};
 use providers::{CODE_ACTION_PROVIDER_ID, LanguageProviders, from_lsp_pos, to_lsp_pos};
 
 pub const EDITOR_PANEL_NAME: &str = "ferro.editor";
@@ -54,6 +62,10 @@ pub const EDITOR_PANEL_NAME: &str = "ferro.editor";
 /// How long typing must pause before diagnostics, hints and the outline are
 /// recomputed.
 pub const ANALYSIS_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// With [`Autosave::AfterDelay`], how long typing must pause before the file
+/// is saved.
+pub const AUTOSAVE_DELAY: Duration = Duration::from_secs(1);
 
 /// What an editor tab persists in the layout file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -70,6 +82,15 @@ pub enum EditorEvent {
     Activated,
     /// The cursor moved.
     CursorMoved,
+    /// The file was written to disk.
+    Saved,
+    /// Saving failed; the message says why.
+    SaveFailed(SharedString),
+    /// The file was reloaded because it changed on disk.
+    Reloaded,
+    /// The user asked to compare the changed file on disk with the
+    /// editor's text.
+    CompareWithDisk,
 }
 
 /// Editor commands the workspace routes to the active editor.
@@ -82,12 +103,32 @@ pub enum EditorCommand {
     ToggleBreakpoint,
     NextProblem,
     PreviousProblem,
+    DuplicateLineDown,
+    DuplicateLineUp,
+    MoveLineUp,
+    MoveLineDown,
+    DeleteLine,
+    ToggleLineComment,
+    ToggleBlockComment,
+    SelectNextOccurrence,
+    SelectAllOccurrences,
+    AddCursorAbove,
+    AddCursorBelow,
 }
 
 enum Content {
     Loading,
     Loaded(Entity<EditorState>),
+    /// The file looks binary; "Open as Text" shows it anyway.
+    Binary(String),
     Failed(SharedString),
+}
+
+/// The file changed on disk while the tab had unsaved changes.
+#[derive(Debug, Clone)]
+pub enum ExternalChange {
+    Modified(Loaded),
+    Deleted,
 }
 
 /// Everything the language and VCS services say about the current text.
@@ -128,6 +169,20 @@ pub struct EditorPanel {
     char_width: Option<Pixels>,
     /// Distance from the editor's left edge to column 0 of the text.
     text_left: Option<Pixels>,
+    /// The file on disk: format, stamp, size class.
+    disk: DiskInfo,
+    /// The text as last loaded or saved, for the modified marker.
+    saved: Rope,
+    dirty: bool,
+    /// A change on disk that conflicts with unsaved edits, shown as a bar
+    /// above the text until resolved.
+    external: Option<ExternalChange>,
+    disk_task: Task<()>,
+    autosave_task: Task<()>,
+    /// Ranges added by Select Next Occurrence, newest last, and whether
+    /// further occurrences must be whole words.
+    occurrences: Vec<Range<usize>>,
+    occurrence_whole_word: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -167,27 +222,6 @@ pub fn language_display(path: &Path) -> &'static str {
     }
 }
 
-type ReadFuture = Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send>>;
-
-/// Files inside the project come from the project service; anything else
-/// (e.g. the raw `settings.toml`) is read from disk.
-fn read_source(path: &Path, services: &Services) -> ReadFuture {
-    let in_project = services
-        .project
-        .roots()
-        .iter()
-        .any(|root| path.starts_with(root));
-    if in_project {
-        services.project.read_file(path)
-    } else {
-        let path = path.to_path_buf();
-        Box::pin(async move {
-            std::fs::read_to_string(&path)
-                .map_err(|err| anyhow::anyhow!("{}: {err}", path.display()))
-        })
-    }
-}
-
 fn severity(severity: Severity) -> DiagnosticSeverity {
     match severity {
         Severity::Error => DiagnosticSeverity::Error,
@@ -205,33 +239,58 @@ impl EditorPanel {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let read = read_source(&path, services);
+        let read = document::load(&path, services, None);
         let services = services.clone();
         cx.new(|cx| {
             let read = cx.background_spawn(read);
             cx.spawn_in(window, async move |this, cx| {
                 let result = read.await;
                 let _ = this.update_in(cx, |this: &mut Self, window, cx| {
-                    this.content = match result {
-                        Ok(text) => {
-                            let state = this.create_state(text, window, cx);
-                            // Focus given to the tab while loading moves
-                            // into the text.
-                            if this.focus_handle.contains_focused(window, cx) {
-                                state.update(cx, |state, cx| state.focus(window, cx));
-                            }
-                            Content::Loaded(state)
+                    match result {
+                        Ok(loaded) if loaded.info.binary => {
+                            this.disk = loaded.info;
+                            this.content = Content::Binary(loaded.text);
                         }
-                        Err(err) => Content::Failed(err.to_string().into()),
-                    };
-                    if let Some(position) = this.pending_position.take() {
-                        this.go_to(position, window, cx);
+                        Ok(loaded) => {
+                            this.disk = loaded.info;
+                            this.show_text(loaded.text, window, cx);
+                        }
+                        Err(err) => this.content = Content::Failed(err.to_string().into()),
                     }
-                    this.schedule_analysis(Duration::ZERO, cx);
                     cx.notify();
                 });
             })
             .detach();
+
+            // Files of the project change through the project service
+            // (a file watcher from Stage 4 on).
+            let project_events = services.project.subscribe();
+            let watched = path.clone();
+            cx.spawn_in(window, async move |this, cx| {
+                while let Ok(event) = project_events.recv().await {
+                    let ours = matches!(
+                        &event,
+                        ProjectEvent::Changed(p) | ProjectEvent::Removed(p) if *p == watched
+                    );
+                    if ours
+                        && this
+                            .update_in(cx, |this, window, cx| this.check_disk(window, cx))
+                            .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .detach();
+
+            // Coming back to the window checks the disk; leaving it saves.
+            let activation = cx.observe_window_activation(window, |this: &mut Self, window, cx| {
+                if window.is_window_active() {
+                    this.check_disk(window, cx);
+                } else {
+                    this.autosave(cx);
+                }
+            });
 
             // Breakpoints change from the gutter, the Debug tool window or
             // another split of the same file.
@@ -257,7 +316,7 @@ impl EditorPanel {
             })
             .detach();
             let breakpoints = services.debug.breakpoints_in(&path);
-            Self {
+            let mut this = Self {
                 path,
                 pinned,
                 preview: false,
@@ -274,9 +333,45 @@ impl EditorPanel {
                 applied: None,
                 char_width: None,
                 text_left: None,
+                disk: DiskInfo::default(),
+                saved: Rope::new(),
+                dirty: false,
+                external: None,
+                disk_task: Task::ready(()),
+                autosave_task: Task::ready(()),
+                occurrences: Vec::new(),
+                occurrence_whole_word: false,
                 _subscriptions: Vec::new(),
-            }
+            };
+            this._subscriptions.push(activation);
+            this
         })
+    }
+
+    /// Put loaded text into a new editor state and run the first analysis.
+    fn show_text(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.create_state(text, window, cx);
+        // Focus given to the tab while loading moves into the text.
+        if self.focus_handle.contains_focused(window, cx) {
+            state.update(cx, |state, cx| state.focus(window, cx));
+        }
+        self.saved = state.read(cx).text().clone();
+        self.dirty = false;
+        self.content = Content::Loaded(state);
+        if let Some(position) = self.pending_position.take() {
+            self.go_to(position, window, cx);
+        }
+        self.schedule_analysis(Duration::ZERO, cx);
+    }
+
+    /// "Open as Text" on a file that looked binary.
+    pub fn open_binary_as_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Content::Binary(text) = &mut self.content {
+            let text = std::mem::take(text);
+            self.disk.binary = false;
+            self.show_text(text, window, cx);
+            cx.notify();
+        }
     }
 
     fn create_state(
@@ -287,18 +382,29 @@ impl EditorPanel {
     ) -> Entity<EditorState> {
         let settings = AppState::settings(cx).editor.clone();
         let providers = LanguageProviders::new(self.path.clone(), self.services.language.clone());
-        let language = language_for(&self.path);
+        // Large files: no highlighting and no soft wrap (plan §5.5).
+        let large = self.disk.is_large();
+        let language = if large {
+            "plaintext"
+        } else {
+            language_for(&self.path)
+        };
+        let read_only = self.disk.is_read_only();
         let state = cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
                 .language(language)
                 .line_number(settings.line_numbers)
-                .soft_wrap(settings.soft_wrap)
+                .soft_wrap(settings.soft_wrap && !large)
                 .tab_size(TabSize {
                     tab_size: settings.tab_size,
                     hard_tabs: false,
                 })
+                .show_whitespaces(settings.show_whitespace)
                 .searchable(true)
                 .default_value(text);
+            if read_only {
+                state.set_readonly(true, cx);
+            }
             let lsp = state.lsp_mut();
             lsp.completion_provider = Some(providers.clone());
             lsp.hover_provider = Some(providers.clone());
@@ -313,8 +419,10 @@ impl EditorPanel {
             &state,
             window,
             |this, _, event: &InputEvent, window, cx| {
-                if let InputEvent::Change = event {
-                    this.on_text_changed(window, cx);
+                match event {
+                    InputEvent::Change => this.on_text_changed(window, cx),
+                    InputEvent::Blur => this.autosave(cx),
+                    _ => {}
                 }
                 cx.emit(EditorEvent::CursorMoved);
             },
@@ -335,6 +443,14 @@ impl EditorPanel {
     fn on_text_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Typing in a preview tab keeps it.
         self.set_preview(false, cx);
+        self.occurrences.clear();
+        self.update_dirty(cx);
+        if self.dirty && AppState::settings(cx).editor.autosave == Autosave::AfterDelay {
+            self.autosave_task = cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(AUTOSAVE_DELAY).await;
+                let _ = this.update(cx, |this, cx| this.autosave(cx));
+            });
+        }
         self.schedule_analysis(ANALYSIS_DEBOUNCE, cx);
         if self.signature.is_some() {
             self.request_signature(window, cx);
@@ -344,7 +460,15 @@ impl EditorPanel {
     /// Recompute diagnostics, outline, hints, runnables and change markers
     /// after `delay`; a newer call replaces (cancels) a pending one.
     fn schedule_analysis(&mut self, delay: Duration, cx: &mut Context<Self>) {
-        let Some(text) = self.text(cx) else { return };
+        // Large files get no analysis (plan §5.5).
+        if self.disk.is_large() {
+            return;
+        }
+        // A rope snapshot costs nothing; it becomes a string only after the
+        // debounce, on a background thread, so typing stays O(1) here.
+        let Some(snapshot) = self.state().map(|s| s.read(cx).text().clone()) else {
+            return;
+        };
         let path = self.path.clone();
         let services = self.services.clone();
         self.analysis_task = cx.spawn(async move |this, cx| {
@@ -353,6 +477,7 @@ impl EditorPanel {
             }
             let analysis = cx
                 .background_spawn(async move {
+                    let text = snapshot.to_string();
                     let language = &services.language;
                     let diagnostics = language.diagnostics(&path, &text);
                     let symbols = language.document_symbols(&path, &text);
@@ -436,10 +561,12 @@ impl EditorPanel {
             .applied
             .as_ref()
             .is_some_and(|a| a.vcs_markers != settings.vcs_markers);
+        let large = self.disk.is_large();
         if let Some(state) = self.state().cloned() {
             state.update(cx, |state, cx| {
                 state.set_line_number(settings.line_numbers, window, cx);
-                state.set_soft_wrap(settings.soft_wrap, window, cx);
+                state.set_soft_wrap(settings.soft_wrap && !large, window, cx);
+                state.set_show_whitespaces(settings.show_whitespace, window, cx);
                 state.set_tab_size(
                     TabSize {
                         tab_size: settings.tab_size,
@@ -563,6 +690,7 @@ impl EditorPanel {
                     self.go_to(target, window, cx);
                 }
             }
+            _ => self.run_text_command(command, &state, window, cx),
         }
     }
 
@@ -700,6 +828,243 @@ impl EditorPanel {
         matches!(self.content, Content::Loaded(_))
     }
 
+    /// The tab has changes that are not on disk yet.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub fn disk(&self) -> &DiskInfo {
+        &self.disk
+    }
+
+    pub fn external_change(&self) -> Option<&ExternalChange> {
+        self.external.as_ref()
+    }
+
+    fn update_dirty(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.state() else { return };
+        let text = state.read(cx).text();
+        let dirty = text.len() != self.saved.len() || *text != self.saved;
+        if dirty != self.dirty {
+            self.dirty = dirty;
+            cx.notify();
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Saving, reloading, changes on disk
+    // -----------------------------------------------------------------------
+
+    /// Save if modified and automatic saving is on. Never while the file's
+    /// change on disk is unresolved: that would silently overwrite it.
+    fn autosave(&mut self, cx: &mut Context<Self>) {
+        if self.dirty
+            && self.external.is_none()
+            && AppState::settings(cx).editor.autosave != Autosave::Off
+        {
+            self.save(cx).detach();
+        }
+    }
+
+    /// Write the text to disk in the file's format. Resolves to whether it
+    /// was saved.
+    pub fn save(&mut self, cx: &mut Context<Self>) -> Task<bool> {
+        let Some(state) = self.state() else {
+            return Task::ready(false);
+        };
+        if self.disk.is_read_only() {
+            return Task::ready(false);
+        }
+        let snapshot = state.read(cx).text().clone();
+        let write = document::save(
+            &self.path,
+            &self.services,
+            snapshot.clone(),
+            self.disk.format,
+        );
+        self.autosave_task = Task::ready(());
+        let write = cx.background_spawn(write);
+        cx.spawn(async move |this, cx| {
+            let result = write.await;
+            this.update(cx, |this, cx| match result {
+                Ok(stamp) => {
+                    this.disk.stamp = Some(stamp);
+                    this.disk.mixed_line_endings = false;
+                    this.saved = snapshot;
+                    this.external = None;
+                    this.update_dirty(cx);
+                    cx.emit(EditorEvent::Saved);
+                    cx.notify();
+                    true
+                }
+                Err(err) => {
+                    let message = match &err {
+                        SaveError::Unmappable(e) => ferro_ui::tr_args(
+                            "editor-save-unmappable",
+                            &[
+                                ("encoding", e.encoding.clone().into()),
+                                ("char", e.first.to_string().into()),
+                                ("count", e.count.into()),
+                            ],
+                        ),
+                        SaveError::Io(e) => ferro_ui::tr_args(
+                            "editor-save-failed",
+                            &[
+                                ("file", this.file_name().to_string().into()),
+                                ("error", e.clone().into()),
+                            ],
+                        ),
+                    };
+                    cx.emit(EditorEvent::SaveFailed(message));
+                    false
+                }
+            })
+            .unwrap_or(false)
+        })
+    }
+
+    /// Look for changes made by other programs. Unmodified tabs reload
+    /// silently; modified ones show a bar offering Reload / Compare / Keep.
+    pub fn check_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(known) = self.disk.stamp else { return };
+        if !self.is_loaded() || self.disk.truncated {
+            return;
+        }
+        let check = cx.background_spawn(document::check(
+            &self.path,
+            &self.services,
+            known,
+            self.disk.format.encoding,
+        ));
+        self.disk_task = cx.spawn_in(window, async move |this, cx| {
+            let state = check.await;
+            let _ = this.update_in(cx, |this, window, cx| this.on_disk_state(state, window, cx));
+        });
+    }
+
+    fn on_disk_state(&mut self, state: DiskState, window: &mut Window, cx: &mut Context<Self>) {
+        match state {
+            DiskState::Unchanged => {}
+            DiskState::Touched(stamp) => self.disk.stamp = Some(stamp),
+            DiskState::Deleted => {
+                if !matches!(self.external, Some(ExternalChange::Deleted)) {
+                    self.external = Some(ExternalChange::Deleted);
+                    cx.notify();
+                }
+            }
+            DiskState::Changed(loaded) => {
+                if self.dirty {
+                    self.external = Some(ExternalChange::Modified(loaded));
+                    cx.notify();
+                } else {
+                    self.apply_reload(loaded, window, cx);
+                }
+            }
+        }
+    }
+
+    /// Replace the text with `loaded`, keeping the caret's line and column.
+    /// The reload can be undone.
+    fn apply_reload(&mut self, loaded: Loaded, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(state) = self.state().cloned() else {
+            return;
+        };
+        let caret = self.caret(cx).unwrap_or_default();
+        self.disk = DiskInfo {
+            format: self.disk.format,
+            ..loaded.info
+        };
+        self.external = None;
+        state.update(cx, |state, cx| {
+            state.replace_all(loaded.text, window, cx);
+            let last_line = state.text().len_lines(ferro_text::LINES).saturating_sub(1);
+            let line = (caret.line as usize).min(last_line) as u32;
+            state.set_cursor_position(Position::new(line, caret.column), window, cx);
+        });
+        self.saved = state.read(cx).text().clone();
+        self.dirty = false;
+        self.schedule_analysis(Duration::ZERO, cx);
+        cx.emit(EditorEvent::Reloaded);
+        cx.notify();
+    }
+
+    /// Reload from disk, discarding unsaved changes (the bar's Reload, or
+    /// File → Reload from Disk).
+    pub fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ExternalChange::Modified(loaded)) = self.external.take() {
+            self.apply_reload(loaded, window, cx);
+            return;
+        }
+        let read = cx.background_spawn(document::load(
+            &self.path,
+            &self.services,
+            Some(self.disk.format.encoding),
+        ));
+        self.disk_task = cx.spawn_in(window, async move |this, cx| {
+            if let Ok(loaded) = read.await {
+                let _ =
+                    this.update_in(cx, |this, window, cx| this.apply_reload(loaded, window, cx));
+            }
+        });
+    }
+
+    /// Keep the editor's text; the next save overwrites the disk.
+    pub fn keep_mine(&mut self, cx: &mut Context<Self>) {
+        if let Some(ExternalChange::Modified(loaded)) = self.external.take() {
+            self.disk.stamp = loaded.info.stamp;
+        } else {
+            self.external = None;
+        }
+        cx.notify();
+    }
+
+    /// The disk version and the editor's version, for Compare.
+    pub fn compare_texts(&self, cx: &App) -> Option<(String, String)> {
+        match &self.external {
+            Some(ExternalChange::Modified(loaded)) => Some((loaded.text.clone(), self.text(cx)?)),
+            _ => None,
+        }
+    }
+
+    /// Read the file again in another encoding (status bar → Reopen with
+    /// Encoding). Unsaved changes are discarded.
+    pub fn reopen_with_encoding(
+        &mut self,
+        encoding: TextEncoding,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let read = cx.background_spawn(document::load(&self.path, &self.services, Some(encoding)));
+        self.disk_task = cx.spawn_in(window, async move |this, cx| {
+            if let Ok(loaded) = read.await {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let format = loaded.info.format;
+                    this.apply_reload(loaded, window, cx);
+                    this.disk.format = format;
+                    cx.notify();
+                });
+            }
+        });
+    }
+
+    /// Write the file in another encoding from now on (status bar → Save
+    /// with Encoding); saves immediately.
+    pub fn save_with_encoding(&mut self, encoding: TextEncoding, cx: &mut Context<Self>) {
+        self.disk.format.encoding = encoding;
+        self.save(cx).detach();
+        cx.notify();
+    }
+
+    /// Change the line separator written on save; saves immediately.
+    pub fn set_line_ending(&mut self, ending: LineEnding, cx: &mut Context<Self>) {
+        if self.disk.format.line_ending != ending {
+            self.disk.format.line_ending = ending;
+            self.disk.mixed_line_endings = false;
+            self.save(cx).detach();
+            cx.notify();
+        }
+    }
+
     pub fn tab_state(&self) -> EditorTabState {
         EditorTabState {
             path: self.path.clone(),
@@ -755,6 +1120,15 @@ impl Panel for EditorPanel {
                     .text_color(muted),
             )
             .child(div().when(self.preview, |el| el.italic()).child(name))
+            .when(self.dirty, |el| {
+                el.child(
+                    div()
+                        .id("editor-modified")
+                        .size(gpui_kit::px(7.))
+                        .rounded_full()
+                        .bg(muted),
+                )
+            })
             .when(self.pinned, |el| {
                 el.child(Icon::from(FerroIcon::Pin).xsmall().text_color(muted))
             })
@@ -832,6 +1206,27 @@ impl Render for EditorPanel {
                 let state = state.clone();
                 self.render_loaded(&state, window, cx).into_any_element()
             }
+            Content::Binary(_) => div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .child(components::empty_state(
+                    FerroIcon::Error,
+                    tr("editor-binary-file"),
+                    None,
+                    cx,
+                ))
+                .child(
+                    Button::new("editor-open-binary")
+                        .label(tr("editor-open-anyway"))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_binary_as_text(window, cx)),
+                        ),
+                )
+                .into_any_element(),
             Content::Failed(err) => components::empty_state(
                 FerroIcon::Error,
                 tr("editor-load-failed"),
@@ -842,6 +1237,8 @@ impl Render for EditorPanel {
         };
         div()
             .id("editor-panel")
+            // Text-editing bindings (Ctrl+D, Alt+↑…) are limited to this.
+            .key_context(ferro_keymap::EDITOR_CONTEXT)
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().background)

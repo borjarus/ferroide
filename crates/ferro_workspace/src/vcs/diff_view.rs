@@ -1,5 +1,7 @@
 //! The diff viewer: a file's working copy against `HEAD`, side by side or
 //! unified, as a tab in the editor area. Built on GPUI Kit's patch viewer.
+//! The same view compares a file on disk with its unsaved editor text when
+//! another program changed it (Stage 3).
 //!
 //! Keyboard: F7 / Shift+F7 jump to the next / previous change; the diff body
 //! itself scrolls with the arrow keys once focused.
@@ -51,8 +53,18 @@ enum Content {
     Failed(SharedString),
 }
 
+/// What a diff tab compares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DiffSource {
+    /// The working copy against `HEAD`, from the VCS service.
+    Vcs,
+    /// The file on disk (left) against the editor's text (right).
+    DiskAndEditor { disk: String, editor: String },
+}
+
 pub struct DiffPanel {
     path: PathBuf,
+    source: DiffSource,
     services: Services,
     content: Content,
     mode: DiffMode,
@@ -64,6 +76,7 @@ impl DiffPanel {
         cx.new(|cx| {
             let mut this = Self {
                 path,
+                source: DiffSource::Vcs,
                 services,
                 content: Content::Loading,
                 mode: if split {
@@ -78,9 +91,42 @@ impl DiffPanel {
         })
     }
 
+    /// Compare the file on disk with the editor's unsaved text.
+    pub fn open_disk_and_editor(
+        path: PathBuf,
+        disk: String,
+        editor: String,
+        services: Services,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx| {
+            let mut this = Self {
+                path,
+                source: DiffSource::DiskAndEditor { disk, editor },
+                services,
+                content: Content::Loading,
+                mode: DiffMode::Split,
+                focus_handle: cx.focus_handle(),
+            };
+            this.reload(cx);
+            this
+        })
+    }
+
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         self.content = Content::Loading;
-        let task = cx.background_spawn(self.services.vcs.diff(&self.path));
+        let task = match &self.source {
+            DiffSource::Vcs => cx.background_spawn(self.services.vcs.diff(&self.path)),
+            DiffSource::DiskAndEditor { disk, editor } => {
+                let diff = ferro_services::FileDiff {
+                    relative: self.file_name(),
+                    patch: crate::editor::document::unified_diff(&self.path, disk, editor),
+                    old_text: disk.clone(),
+                    new_text: editor.clone(),
+                };
+                cx.background_spawn(async move { anyhow::Ok(diff) })
+            }
+        };
         let language = crate::editor::language_for(&self.path);
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -208,7 +254,9 @@ pub fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    if let Some(id) = find_panel::<DiffPanel>(workspace, cx, |p| p.path == path) {
+    if let Some(id) = find_panel::<DiffPanel>(workspace, cx, |p| {
+        p.path == path && p.source == DiffSource::Vcs
+    }) {
         workspace
             .dock_area
             .update(cx, |area, cx| area.select_panel(id, window, cx));
