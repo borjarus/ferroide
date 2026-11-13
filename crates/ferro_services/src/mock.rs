@@ -517,6 +517,13 @@ impl ProjectService for MockProjectService {
         vec![self.root.clone()]
     }
 
+    fn initial_files(&self) -> Vec<PathBuf> {
+        ["src/main.rs", "src/lib.rs", "Cargo.toml"]
+            .iter()
+            .map(|rel| join_rel(&self.root, rel))
+            .collect()
+    }
+
     fn children(&self, dir: &Path) -> BoxFuture<'static, Result<Vec<Entry>>> {
         let fail = self.should_fail();
         let latency = self.config.latency;

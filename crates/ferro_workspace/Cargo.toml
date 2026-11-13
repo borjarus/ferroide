@@ -23,6 +23,9 @@ ferro_keymap.workspace = true
 ferro_settings.workspace = true
 ferro_services.workspace = true
 ferro_text.workspace = true
+ferro_db.workspace = true
+ferro_project.workspace = true
+async-channel.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

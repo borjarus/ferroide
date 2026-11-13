@@ -2,12 +2,18 @@
 //! the app-level action handlers (theme, language, keymap, zoom) that work in
 //! every window.
 
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
+use ferro_db::StateDb;
 use ferro_i18n::Locale;
 use ferro_keymap::{KeymapPreset, Platform, ResolvedBinding, UserKeymap};
 use ferro_settings::{
-    DEFAULT_UI_FONT_SIZE, MAX_UI_FONT_SIZE, MIN_UI_FONT_SIZE, Paths, Settings, themes,
+    DEFAULT_UI_FONT_SIZE, EditorSettings, MAX_UI_FONT_SIZE, MIN_UI_FONT_SIZE, Paths, Settings,
+    themes,
 };
 use gpui_kit::{App, Global};
 
@@ -26,6 +32,15 @@ pub struct AppState {
     /// The duration of the most recent theme switch, for the status bar
     /// diagnostics and the Stage 1 budget (< 50 ms).
     pub last_theme_switch: Option<Duration>,
+    /// Workspace state: layouts, history, recent projects, trust. In memory
+    /// when `persist` is off.
+    pub db: Arc<StateDb>,
+    /// Settings with a project's `.ferroide/settings.toml` applied, per
+    /// project root.
+    pub project_settings: Vec<(PathBuf, Settings)>,
+    /// Watches `settings.toml` and `keymap.toml` for edits made outside
+    /// the Settings window.
+    _config_watcher: Option<ferro_project::FileWatcher>,
 }
 
 impl Global for AppState {}
@@ -49,6 +64,22 @@ impl AppState {
             UserKeymap::default()
         };
         let keymap = ferro_keymap::resolve(settings.keymap.base, Platform::current(), &user_keymap);
+        let db = if persist {
+            StateDb::open(&paths.state_db_file()).unwrap_or_else(|err| {
+                tracing::error!("workspace state will not be kept: {err:#}");
+                StateDb::open_in_memory().expect("an in-memory database")
+            })
+        } else {
+            StateDb::open_in_memory().expect("an in-memory database")
+        };
+        if persist && let Err(err) = paths.write_schema() {
+            tracing::warn!("could not write the settings schema: {err:#}");
+        }
+        let config_watcher = if persist {
+            watch_config(&paths, cx)
+        } else {
+            None
+        };
         cx.set_global(AppState {
             settings,
             user_keymap,
@@ -56,6 +87,9 @@ impl AppState {
             paths,
             persist,
             last_theme_switch: None,
+            db: Arc::new(db),
+            project_settings: Vec::new(),
+            _config_watcher: config_watcher,
         });
         apply_appearance(cx);
         let keymap = AppState::global(cx).keymap.clone();
@@ -64,11 +98,55 @@ impl AppState {
         menus::install(cx);
     }
 
+    /// The editor settings for a file: the global ones, with the
+    /// `[editor]` overrides of the project the file belongs to.
+    pub fn editor_settings<'a>(path: &Path, cx: &'a App) -> &'a EditorSettings {
+        let state = Self::global(cx);
+        state
+            .project_settings
+            .iter()
+            .find(|(root, _)| path.starts_with(root))
+            .map_or(&state.settings.editor, |(_, s)| &s.editor)
+    }
+
+    /// (Re)read the project settings of `root`.
+    pub fn load_project_settings(root: &Path, cx: &mut App) {
+        let state = cx.global_mut::<Self>();
+        let merged = Paths::with_project_settings(&state.settings, root);
+        state.project_settings.retain(|(r, _)| r != root);
+        if merged != state.settings {
+            state.project_settings.push((root.to_path_buf(), merged));
+        }
+        cx.refresh_windows();
+    }
+
+    pub fn forget_project_settings(root: &Path, cx: &mut App) {
+        cx.global_mut::<Self>()
+            .project_settings
+            .retain(|(r, _)| r != root);
+    }
+
+    fn reapply_project_settings(&mut self) {
+        let roots: Vec<PathBuf> = self
+            .project_settings
+            .iter()
+            .map(|(r, _)| r.clone())
+            .collect();
+        self.project_settings = roots
+            .into_iter()
+            .map(|root| {
+                let merged = Paths::with_project_settings(&self.settings, &root);
+                (root, merged)
+            })
+            .collect();
+    }
+
     /// Edit the settings, persist them, and refresh every window.
     pub fn update_settings(cx: &mut App, edit: impl FnOnce(&mut Settings)) {
         let state = cx.global_mut::<Self>();
         edit(&mut state.settings);
         state.settings = state.settings.clone().sanitized();
+        state.reapply_project_settings();
         if state.persist
             && let Err(err) = state.paths.save_settings(&state.settings)
         {
@@ -157,6 +235,93 @@ pub fn zoom_ui(delta: Option<f32>, cx: &mut App) {
         };
     });
     apply_appearance(cx);
+}
+
+/// Watch the config directory and reload `settings.toml` / `keymap.toml`
+/// when they are edited outside FerroIDE (or in an editor tab).
+fn watch_config(paths: &Paths, cx: &mut App) -> Option<ferro_project::FileWatcher> {
+    let dir = paths.config_dir.clone();
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        tracing::warn!("cannot create {}: {err}", dir.display());
+        return None;
+    }
+    let (tx, rx) = async_channel::unbounded::<Vec<PathBuf>>();
+    let filter = Arc::new(ferro_project::IgnoreFilter::new(&dir));
+    let watcher =
+        ferro_project::FileWatcher::new(&dir, filter, Duration::from_millis(100), move |events| {
+            let paths = events
+                .into_iter()
+                .filter_map(|event| match event {
+                    ferro_services::ProjectEvent::Added(p)
+                    | ferro_services::ProjectEvent::Changed(p) => Some(p),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if !paths.is_empty() {
+                let _ = tx.try_send(paths);
+            }
+        });
+    let watcher = match watcher {
+        Ok(watcher) => watcher,
+        Err(err) => {
+            tracing::warn!("settings will not reload when edited: {err:#}");
+            return None;
+        }
+    };
+    cx.spawn(async move |cx| {
+        while let Ok(changed) = rx.recv().await {
+            cx.update(|cx| {
+                let paths = &AppState::global(cx).paths;
+                let (settings_file, keymap_file) = (paths.settings_file(), paths.keymap_file());
+                if changed.contains(&settings_file) {
+                    reload_settings_from_disk(cx);
+                }
+                if changed.contains(&keymap_file) {
+                    reload_keymap_from_disk(cx);
+                }
+            });
+        }
+    })
+    .detach();
+    Some(watcher)
+}
+
+/// Apply `settings.toml` as it is on disk now. Our own saves read back
+/// unchanged and do nothing.
+pub fn reload_settings_from_disk(cx: &mut App) {
+    let state = AppState::global(cx);
+    let loaded = state.paths.load_settings();
+    let old = state.settings.clone();
+    if loaded == old {
+        return;
+    }
+    tracing::info!("settings.toml changed on disk; applying it");
+    let state = cx.global_mut::<AppState>();
+    state.settings = loaded.clone();
+    state.reapply_project_settings();
+    if loaded.locale != old.locale {
+        ferro_i18n::set_locale(loaded.locale);
+    }
+    if loaded.appearance != old.appearance || loaded.editor.font_size != old.editor.font_size {
+        apply_appearance(cx);
+    }
+    if loaded.keymap != old.keymap {
+        reinstall_keymap(cx);
+    } else {
+        menus::install(cx);
+    }
+    cx.refresh_windows();
+}
+
+/// Apply `keymap.toml` as it is on disk now.
+pub fn reload_keymap_from_disk(cx: &mut App) {
+    let loaded = AppState::global(cx).paths.load_user_keymap();
+    if loaded == AppState::global(cx).user_keymap {
+        return;
+    }
+    tracing::info!("keymap.toml changed on disk; applying it");
+    cx.global_mut::<AppState>().user_keymap = loaded;
+    reinstall_keymap(cx);
 }
 
 fn register_app_actions(cx: &mut App) {

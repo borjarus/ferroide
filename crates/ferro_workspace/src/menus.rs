@@ -116,6 +116,7 @@ pub fn build(cx: &App) -> Vec<Menu> {
                 item("ferro::NewProject", cx),
                 item("ferro::OpenProject", cx),
                 item("ferro::GetFromVcs", cx),
+                item("ferro::AddFolderToProject", cx),
                 sep(),
                 item("ferro::NewWindow", cx),
                 item("ferro::CloseProject", cx),

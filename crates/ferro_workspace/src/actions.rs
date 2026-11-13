@@ -13,6 +13,8 @@ gpui_kit::actions!(
         NewProject,
         OpenProject,
         GetFromVcs,
+        AddFolderToProject,
+        TrustProject,
         CloseProject,
         NewWindow,
         Save,

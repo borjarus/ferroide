@@ -34,7 +34,9 @@ ftl_files!(
 );
 
 /// A language FerroIDE ships translations for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Locale {
     #[default]

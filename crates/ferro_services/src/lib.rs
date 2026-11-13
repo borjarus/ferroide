@@ -60,6 +60,8 @@ pub enum ProjectEvent {
     Added(PathBuf),
     Removed(PathBuf),
     Changed(PathBuf),
+    /// A root directory was added to or removed from the project.
+    RootsChanged,
 }
 
 /// The files of the open project.
@@ -86,6 +88,19 @@ pub trait ProjectService: Send + Sync + 'static {
     /// Rename or move `from` to `to`.
     fn rename(&self, from: &Path, to: &Path) -> BoxFuture<'static, Result<()>>;
     fn delete(&self, path: &Path) -> BoxFuture<'static, Result<()>>;
+    /// Files a window opens when the project has no saved layout.
+    fn initial_files(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+    /// Add another root directory (IntelliJ: a module); returns it as the
+    /// project will report it.
+    fn add_root(&self, path: &Path) -> Result<PathBuf> {
+        anyhow::bail!("{} cannot be added to this project", path.display())
+    }
+    /// Remove a root directory from the project (nothing is deleted).
+    fn remove_root(&self, path: &Path) -> Result<()> {
+        anyhow::bail!("{} cannot be removed from this project", path.display())
+    }
 }
 
 /// A project the welcome screen offers to reopen.

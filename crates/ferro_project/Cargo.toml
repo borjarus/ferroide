@@ -1,0 +1,27 @@
+[package]
+name = "ferro_project"
+description = "FerroIDE project files: real file system, .gitignore, watcher, file operations, search"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+async-channel.workspace = true
+smol.workspace = true
+tracing.workspace = true
+ignore = "0.4"
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+trash = "5"
+regex = "1"
+ferro_services.workspace = true
+ferro_text.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

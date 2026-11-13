@@ -45,7 +45,7 @@ impl EditorPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         self.measure(state, window, cx);
-        let settings = AppState::settings(cx).editor.clone();
+        let settings = AppState::editor_settings(&self.path, cx).clone();
         let (line_height, scroll, visible) = {
             let s = state.read(cx);
             (
@@ -277,7 +277,7 @@ impl EditorPanel {
     ) -> impl IntoElement {
         let theme = cx.theme();
         let (muted, border) = (theme.muted_foreground, theme.border);
-        let inlay = AppState::settings(cx).editor.inlay_hints;
+        let inlay = AppState::editor_settings(&self.path, cx).inlay_hints;
         let mut crumbs = h_flex()
             .id("editor-breadcrumbs")
             .flex_1()

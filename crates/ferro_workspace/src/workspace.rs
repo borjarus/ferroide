@@ -4,7 +4,10 @@
 
 use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
 
-use ferro_services::{Branch, RunConfiguration, RunEvent, RunState, Services, TaskProgress};
+use ferro_db::{Location, NavLocation};
+use ferro_services::{
+    Branch, ProjectEvent, RunConfiguration, RunEvent, RunState, Services, TaskProgress, TextPos,
+};
 use ferro_ui::tr;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable, Global,
@@ -93,14 +96,25 @@ fn register_builders(cx: &mut App) {
             path: services.project.roots()[0].join("README.md"),
             pinned: false,
         });
-        panel_handle(EditorPanel::open(
-            state.path,
-            state.pinned,
-            &services,
-            window,
-            cx,
-        ))
+        let editor = EditorPanel::open(state.path, state.pinned, &services, window, cx);
+        // Put the caret where it was when the window closed.
+        let key = project_key(&services);
+        let path = editor.read(cx).path().to_path_buf();
+        if let Ok(Some((line, column))) = AppState::global(cx).db.cursor(&key, &path) {
+            editor.update(cx, |e, cx| e.go_to(TextPos::new(line, column), window, cx));
+        }
+        panel_handle(editor)
     });
+}
+
+/// The key the project's state is stored under: its first root.
+pub(crate) fn project_key(services: &Services) -> String {
+    services
+        .project
+        .roots()
+        .first()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| services.project.name())
 }
 
 /// A place in the code Back and Forward return to.
@@ -157,12 +171,7 @@ impl Workspace {
             .0
             .insert(dock_area.entity_id(), services.clone());
 
-        let project_key = services
-            .project
-            .roots()
-            .first()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| services.project.name());
+        let project_key = project_key(&services);
 
         let mut subscriptions = vec![
             cx.subscribe_in(
@@ -208,9 +217,141 @@ impl Workspace {
         if !this.restore_layout(window, cx) {
             this.install_default_layout(window, cx);
         }
+        this.restore_history(cx);
+        for root in this.services.project.roots() {
+            AppState::load_project_settings(&root, cx);
+        }
+        this.watch_project(cx);
         this.start_service_feeds(cx);
         this.focus_handle.focus(window, cx);
         this
+    }
+
+    /// Follow root folders being added or removed, and edits of a
+    /// project's `.ferroide/settings.toml`.
+    fn watch_project(&mut self, cx: &mut Context<Self>) {
+        let events = self.services.project.subscribe();
+        cx.spawn(async move |this, cx| {
+            while let Ok(event) = events.recv().await {
+                let alive = this.update(cx, |this, cx| match &event {
+                    ProjectEvent::RootsChanged => {
+                        let roots = this.services.project.roots();
+                        cx.global_mut::<AppState>()
+                            .project_settings
+                            .retain(|(root, _)| roots.contains(root));
+                        for root in roots {
+                            AppState::load_project_settings(&root, cx);
+                        }
+                        this.schedule_save(cx);
+                    }
+                    ProjectEvent::Added(path)
+                    | ProjectEvent::Changed(path)
+                    | ProjectEvent::Removed(path) => {
+                        let root = this.services.project.roots().into_iter().find(|root| {
+                            *path == ferro_settings::Paths::project_settings_file(root)
+                        });
+                        if let Some(root) = root {
+                            AppState::load_project_settings(&root, cx);
+                        }
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Back / Forward and recent files as the project left them.
+    fn restore_history(&mut self, cx: &mut Context<Self>) {
+        let db = AppState::global(cx).db.clone();
+        if let Ok((back, forward)) = db.nav_history(&self.project_key) {
+            let entry = |n: NavLocation| NavEntry {
+                path: n.path,
+                position: n.position.map(|(line, column)| TextPos::new(line, column)),
+            };
+            if self.nav_back.is_empty() && self.nav_forward.is_empty() {
+                self.nav_back = back.into_iter().map(entry).collect();
+                self.nav_forward = forward.into_iter().map(entry).collect();
+            }
+        }
+        if let Ok(files) = db.recent_files(&self.project_key)
+            && !files.is_empty()
+        {
+            let id = self.dock_area.entity_id();
+            crate::quick_open::seed_recent_files(id, files, cx);
+        }
+    }
+
+    /// Persist what is not part of the dock layout: Back / Forward, recent
+    /// files and the caret of every open file.
+    fn save_history(&self, cx: &App) {
+        let db = AppState::global(cx).db.clone();
+        let key = &self.project_key;
+        let nav = |list: &[NavEntry]| -> Vec<NavLocation> {
+            list.iter()
+                .map(|e| NavLocation {
+                    path: e.path.clone(),
+                    position: e.position.map(|p| (p.line, p.column)),
+                })
+                .collect()
+        };
+        let mut result = db.save_nav_history(key, &nav(&self.nav_back), &nav(&self.nav_forward));
+        // Most recent first, the active file at the top.
+        let mut recent = crate::quick_open::recent_files(self, cx);
+        if let Some(active) = recent.pop() {
+            recent.insert(0, active);
+        }
+        for path in recent.iter().rev() {
+            result = result.and(db.touch_recent_file(key, path));
+        }
+        for editor in &self.editors {
+            let editor = editor.read(cx);
+            if let Some(caret) = editor.caret(cx) {
+                result = result.and(db.save_cursor(
+                    key,
+                    &Location {
+                        path: editor.path().to_path_buf(),
+                        line: caret.line,
+                        column: caret.column,
+                    },
+                ));
+            }
+        }
+        if let Err(err) = result {
+            tracing::warn!("could not save the workspace state: {err:#}");
+        }
+    }
+
+    /// Remember a visited place for Recent Locations.
+    fn record_location(&self, entry: &NavEntry, cx: &App) {
+        let Some(position) = entry.position else {
+            return;
+        };
+        let snippet = self
+            .editors
+            .iter()
+            .find(|e| e.read(cx).path() == entry.path)
+            .and_then(|e| e.read(cx).text(cx))
+            .and_then(|text| text.lines().nth(position.line as usize).map(str::to_string))
+            .unwrap_or_default();
+        let location = Location {
+            path: entry.path.clone(),
+            line: position.line,
+            column: position.column,
+        };
+        if let Err(err) =
+            AppState::global(cx)
+                .db
+                .add_recent_location(&self.project_key, &location, &snippet)
+        {
+            tracing::warn!("could not record a recent location: {err:#}");
+        }
+    }
+
+    pub fn project_key(&self) -> &str {
+        &self.project_key
     }
 
     pub fn build(services: Services, window: &mut Window, cx: &mut App) -> Entity<Self> {
@@ -289,9 +430,11 @@ impl Workspace {
                         if this.active_editor_entity().as_ref() != Some(editor)
                             && let Some(from) = this.current_location(cx)
                         {
+                            this.record_location(&from, cx);
                             this.push_back(from);
                         }
                         this.mark_active_editor(editor);
+                        this.schedule_save(cx);
                         crate::panels::structure::active_editor_changed(this, cx);
                     }
                     EditorEvent::CursorMoved | EditorEvent::Saved | EditorEvent::Reloaded => {}
@@ -343,10 +486,9 @@ impl Workspace {
             );
         }
 
-        let root = self.services.project.roots()[0].clone();
         let mut center = DockLayout::tabs();
-        for rel in ["src/main.rs", "src/lib.rs", "Cargo.toml"] {
-            let editor = EditorPanel::open(root.join(rel), false, &self.services, window, cx);
+        for path in self.services.project.initial_files() {
+            let editor = EditorPanel::open(path, false, &self.services, window, cx);
             self.adopt_editor(editor.clone(), window, cx);
             center = center.panel_view(panel_handle(editor), cx);
         }
@@ -377,7 +519,14 @@ impl Workspace {
     /// Restore the layout saved for this project. Returns false when there
     /// is none or it cannot be used.
     fn restore_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let state = AppState::global(cx).paths.load_layout(&self.project_key);
+        // Stages 1–3 kept layouts in JSON files; they are imported once.
+        let app = AppState::global(cx);
+        let state = app
+            .db
+            .load_layout(&self.project_key)
+            .ok()
+            .flatten()
+            .or_else(|| app.paths.load_layout(&self.project_key));
         let Some(state) = state.and_then(|v| serde_json::from_value::<DockAreaState>(v).ok())
         else {
             return false;
@@ -441,6 +590,16 @@ impl Workspace {
             .partition(|e| alive.contains(&PanelId::from(e.entity_id())));
         self.editors = kept;
         for editor in closed {
+            if let Some(caret) = editor.read(cx).caret(cx) {
+                let location = Location {
+                    path: editor.read(cx).path().to_path_buf(),
+                    line: caret.line,
+                    column: caret.column,
+                };
+                let _ = AppState::global(cx)
+                    .db
+                    .save_cursor(&self.project_key, &location);
+            }
             save_if_dirty(&editor, cx);
         }
         if self
@@ -471,19 +630,24 @@ impl Workspace {
         let state = self.dock_area.read(cx).dump(cx);
         match serde_json::to_value(&state) {
             Ok(value) => {
-                if let Err(err) = AppState::global(cx)
-                    .paths
-                    .save_layout(&self.project_key, &value)
-                {
+                let app = AppState::global(cx);
+                if let Err(err) = app.db.save_layout(&self.project_key, &value) {
                     tracing::warn!("could not save layout: {err:#}");
+                } else {
+                    // The database has it now; drop the Stage 1–3 file.
+                    app.paths.delete_layout(&self.project_key);
                 }
             }
             Err(err) => tracing::warn!("could not serialize layout: {err}"),
         }
+        self.save_history(cx);
     }
 
     pub(crate) fn reset_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         AppState::global(cx).paths.delete_layout(&self.project_key);
+        if let Err(err) = AppState::global(cx).db.delete_layout(&self.project_key) {
+            tracing::warn!("could not reset the saved layout: {err:#}");
+        }
         let mut groups: HashMap<DockPlacement, DockLayout> = HashMap::new();
         for kind in ToolWindowKind::ALL {
             let panel = self.tool_window(kind, window, cx);
@@ -1251,6 +1415,13 @@ impl Workspace {
     }
 
     pub(crate) fn start_run(&mut self, debug: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !crate::projects::is_trusted(&self.services, cx) {
+            window.push_notification(
+                Notification::warning(tr("project-untrusted-run").to_string()),
+                cx,
+            );
+            return;
+        }
         let Some(config) = self.run_configs.get(self.selected_run).cloned() else {
             return;
         };
@@ -1602,6 +1773,13 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &SplitDown, window, cx| {
                 this.split(Placement::Bottom, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &AddFolderToProject, window, cx| {
+                crate::projects::prompt_add_folder(this, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &TrustProject, _, cx| {
+                crate::projects::trust(&this.services, cx);
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &Run, window, cx| this.start_run(false, window, cx)))
             .on_action(cx.listener(|this, _: &Debug, window, cx| this.start_run(true, window, cx)))
             .on_action(cx.listener(|this, _: &Stop, _, cx| this.stop_run(cx)))
@@ -1611,6 +1789,7 @@ impl Render for Workspace {
             .bg(bg)
             .text_color(fg)
             .child(self.render_title_bar(window, cx))
+            .children(crate::projects::render_trust_bar(self, cx))
             .child(
                 div()
                     .flex_1()

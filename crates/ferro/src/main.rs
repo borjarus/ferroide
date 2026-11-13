@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! ferroide              welcome screen
+//! ferroide <folder>…    open a project (several folders: several roots)
 //! ferroide --demo       open the demo project directly
 //! ferroide --lang pl    override the UI language for this run
 //! ```
@@ -16,7 +17,7 @@
     windows_subsystem = "windows"
 )]
 
-use std::time::Instant;
+use std::{path::PathBuf, time::Instant};
 
 use ferro_settings::Paths;
 use ferro_workspace::AppState;
@@ -28,6 +29,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 #[derive(Default)]
 struct Args {
     demo: bool,
+    folders: Vec<PathBuf>,
     locale: Option<ferro_i18n::Locale>,
     exit_after_first_frame: bool,
 }
@@ -45,10 +47,13 @@ fn parse_args() -> Args {
             }
             "--exit-after-first-frame" => args.exit_after_first_frame = true,
             "--help" | "-h" => {
-                println!("Usage: ferroide [--demo] [--lang en|pl] [--exit-after-first-frame]");
+                println!(
+                    "Usage: ferroide [<folder>…] [--demo] [--lang en|pl] [--exit-after-first-frame]"
+                );
                 std::process::exit(0);
             }
-            other => eprintln!("ignoring unknown argument {other}"),
+            other if other.starts_with('-') => eprintln!("ignoring unknown argument {other}"),
+            folder => args.folders.push(PathBuf::from(folder)),
         }
     }
     args
@@ -81,6 +86,13 @@ fn main() {
             let opened = if args.demo {
                 ferro_workspace::open_workspace(ferro_workspace::mock_services(), cx)
                     .map(|(window, _)| window)
+            } else if !args.folders.is_empty() {
+                ferro_workspace::projects::open_project(args.folders.clone(), cx)
+                    .map(|(window, _)| window)
+                    .or_else(|err| {
+                        tracing::error!("{err:#}");
+                        ferro_workspace::open_welcome(cx).map(|(window, _)| window)
+                    })
             } else {
                 ferro_workspace::open_welcome(cx).map(|(window, _)| window)
             };

@@ -11,10 +11,7 @@ use ferro_text::{
     edit::apply_to_string,
     ops::{self, Change},
 };
-use gpui_kit::{
-    Context, Entity, Window,
-    component::input::{self as kit_input, EditorState},
-};
+use gpui_kit::{Context, Entity, Window, base::input as kit_input, component::input::EditorState};
 
 use super::{EditorCommand, EditorPanel, language_for};
 
