@@ -10,7 +10,7 @@ use std::{
 
 use ferro_services::{RunState, TextPos};
 use ferro_settings::{Paths, Settings};
-use gpui_kit::{AnyWindowHandle, Entity, TestAppContext};
+use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext};
 
 use crate::{
     AppState, panels::project::ProjectTree, projects, tool_window::ToolWindowKind,

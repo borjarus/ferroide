@@ -270,7 +270,7 @@ fn watch_config(paths: &Paths, cx: &mut App) -> Option<ferro_project::FileWatche
     };
     cx.spawn(async move |cx| {
         while let Ok(changed) = rx.recv().await {
-            let _ = cx.update(|cx| {
+            cx.update(|cx| {
                 let paths = &AppState::global(cx).paths;
                 let (settings_file, keymap_file) = (paths.settings_file(), paths.keymap_file());
                 if changed.contains(&settings_file) {

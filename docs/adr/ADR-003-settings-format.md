@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-11-06
 - **Stage:** 0 (implemented in part in Stage 1, completed in Stage 4)
+- **Updated:** 2026-11-13 (Stage 4: project settings scope, migrations, schema)
 
 ## Context
 
@@ -36,6 +37,25 @@ FerroIDE stores three kinds of data with different owners and lifetimes:
 - `<config>` and `<data>` are the platform directories from the `dirs`
   crate (`%APPDATA%`/`%LOCALAPPDATA%` on Windows, `~/Library/Application
   Support` on macOS, XDG on Linux).
+
+### As implemented in Stage 4
+
+- `settings.toml` carries `version` (currently 2); `ferro_settings::migrate`
+  upgrades older files in memory before they are read. A file from a newer
+  FerroIDE still loads (unknown keys are ignored).
+- `settings.schema.json` is generated from the settings types (`schemars`)
+  and written next to `settings.toml`, whose first line is a Taplo
+  `#:schema ./settings.schema.json` directive, so TOML editors suggest keys
+  and values.
+- `<project>/.ferroide/settings.toml` may override only `[editor]`; other
+  sections are logged and ignored, so a cloned repository cannot change the
+  user's keymap, theme or language.
+- Workspace state lives in `<data>/FerroIDE/state.db` (`ferro_db`), with
+  schema migrations through `PRAGMA user_version`. A database that cannot be
+  opened is moved aside to `state.db.broken` and recreated. Stage 1–3 layout
+  files are imported on first open and then deleted.
+- `settings.toml`, `keymap.toml` and project settings reload live when
+  edited outside the Settings window.
 
 ## Consequences
 

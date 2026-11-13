@@ -216,12 +216,70 @@ files, closing modified tabs, line commands, Ctrl+D with typing, shortcuts).
 
 ### Open items
 
-- The `ferro_workspace` changes were written but not yet compiled or run on
-  the development machine: from the middle of the session, new build-script
-  executables under `target/` could not be created or started (`LNK1104`,
-  "used by another process"), most likely antivirus scanning. `ferro_text`
-  builds and passes. Next step: `cargo test --workspace` once the files are
-  allowed again.
+- ~~The `ferro_workspace` changes were not compiled on the development
+  machine~~ (antivirus locks new build-script executables under `target/`).
+  They are now built and tested by CI on all four platforms; the wrong
+  import path of the multi-cursor actions that broke every CI job since
+  51796da was fixed, and the debug typing-latency check got the full 16 ms
+  budget (the macOS Intel runner measured p99 ≈ 8.7 ms).
 - Weak-profile and key-to-pixel measurements on the 100k-line file.
 - `ferro_editor`: our own view on top of `ferro_text` (true inline hints,
   all cursors visible to commands, one undo stack).
+
+## Stage 4 — Project, files and state
+
+FerroIDE opens folders from disk. A project opened with **Open…**, from the
+welcome screen or as `ferroide <folder>` runs on `FsProjectService` and
+`FsSearchService`; the other services (language, VCS, run, debug, terminal)
+stay mocks until their stages. `--demo` still opens the mock project.
+
+| Plan item | Delivered |
+|---|---|
+| `FsProjectService`: background scanning with `ignore`, `notify` watcher with a debouncer, file operations, delete to the system trash | ✔ new crate `ferro_project`: listings respect `.gitignore` / `.ignore` / `.git/info/exclude` and hide `.git`; a parallel scan builds a `FileIndex` that the watcher keeps current; the watcher coalesces a burst into one event per path (50 ms debounce) and drops ignored paths; create, rename / move, delete to the trash (`trash`), atomic saves (`ferro_text::file::write_atomic`) |
+| Workspace state in SQLite: open files, layout, cursor positions, Back / Forward, recent files, Recent Locations | ✔ new crate `ferro_db` (`rusqlite`, bundled SQLite, versioned migrations): the dock layout (with the open tabs), carets per file, Back / Forward, recent files (seed Quick Open), visited locations, recent projects (welcome screen, with the branch from `.git/HEAD`). Stage 1–3 JSON layouts are imported once. The Recent Locations *popup* is not built yet (see deviations) |
+| Settings: global and project-level, JSON Schema with suggestions, live reload, migrations | ✔ `.ferroide/settings.toml` overrides `[editor]` per project; `settings.schema.json` generated with `schemars` plus a `#:schema` directive; `version` key with `ferro_settings::migrate`; `settings.toml`, `keymap.toml` and project settings reload when edited outside the IDE |
+| Keymap persistence (`[keymap] base`, `keymap.toml`, live reload) | ✔ (base and overrides were stored since Stage 2; live reload is new) |
+| Multiple root directories | ✔ `ProjectService::add_root` / `remove_root`, **File ▸ Add Folder to Project…**, the tree shows each root; search prefixes paths with the root name; reopened with all roots |
+| Trusted projects | ✔ a folder never trusted opens in safe mode with a bar (**Trust Project** / **Stay in Safe Mode**); Run / Debug are refused until it is trusted; trust is stored per folder and covers subfolders |
+
+**Definition of Done:**
+
+| Criterion | How it is checked | Result |
+|---|---|---|
+| A 100k-file project opens in < 1 s, first tree level immediately | `ferro_project` tests `a_large_project_shows_its_first_level_immediately` (20k files, every CI run) and `hundred_thousand_files_open_within_a_second` (`cargo test -p ferro_project --release -- --ignored hundred_thousand`) | Linux (WSL2, ext4), release: first level **0.4 ms**, full index of 100k files **120 ms** |
+| Changes on disk visible within < 200 ms | `outside_changes_arrive_within_the_budget` (create, modify, delete by another program; asserts < 1 s on CI) | Linux: **~52 ms** for each kind of change |
+
+Tests: `ferro_project` 8 (+2 on request), `ferro_db` 8, `ferro_settings` 8
+(3 new), and `ferro_workspace/src/tests_projects.rs` with 5 headless window
+tests: a folder from disk (tree, README, Quick Open), safe mode and trust,
+project settings with live reload, adding and removing root folders, and
+layout / carets / Back / recent files surviving a reopen.
+
+### Deviations from the plan
+
+- **Recent Locations popup** (IntelliJ Ctrl+Shift+E): visits are recorded
+  in the database, but the popup itself comes with the navigation work of
+  Stage 7; adding a mode without a prefix to Quick Open needs its parser
+  reworked.
+- **LSP and tasks in safe mode**: language servers and tasks are still
+  mocks, so only Run / Debug check trust today; the real ones (Stages 6 and
+  8) must call `projects::is_trusted`.
+- **Ignored files are hidden** from the project tree instead of being shown
+  dimmed (`ProjectOptions::show_ignored` exists, without a UI switch yet).
+- **The watcher is recursive** over the whole root, including ignored
+  directories (one inotify watch per directory on Linux); the events are
+  filtered afterwards. Large `node_modules` / `target` trees can reach the
+  inotify limit; watching only non-ignored directories is a later
+  optimization. Nested `.gitignore` files apply to listings and the scan,
+  only the root's to watcher events.
+- **"Suggestions" from the JSON Schema** come from TOML editors that read
+  the `#:schema` directive (Taplo); FerroIDE's own completion for
+  `settings.toml` needs the LSP layer (Stage 6).
+- **VCS, run configurations and diagnostics** of a project from disk are
+  still the demo mocks.
+
+### Open items
+
+- Measure the 100k-file DoD on Windows (NTFS + antivirus) and macOS.
+- The Stage 4 window tests run in CI only (the development machine cannot
+  build GPUI, see Stage 3).

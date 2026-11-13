@@ -4,17 +4,19 @@ One universal IDE for every popular language — IntelliJ IDEA's ergonomics
 with Zed's speed — written entirely in Rust with a GPU-rendered interface,
 for Linux, Windows and macOS, including weaker computers.
 
-> **Status: Stage 3 of 14.** The complete IDE window runs on mock services,
-> and the editor core (`ferro_text`) reads and saves real files in any
-> common encoding and line separator, with multi-cursor and line commands.
-> Real project scanning, language servers, Git and the debugger arrive in
-> later stages — see the [plan](docs/FerroIDE_plan.md) and
-> [status](docs/STATUS.md).
+> **Status: Stage 4 of 14.** FerroIDE opens folders from disk: the
+> project tree, Quick Open and Find in Files work on real files (respecting
+> `.gitignore`), changes made by other programs appear immediately, and the
+> window remembers its layout, carets and history. The editor core
+> (`ferro_text`) reads and saves files in any common encoding. Language
+> servers, Git, running and the debugger are still mocks until their stages
+> — see the [plan](docs/FerroIDE_plan.md) and [status](docs/STATUS.md).
 
 ## Try it
 
 ```sh
 cargo run                     # welcome screen
+cargo run -- path/to/project  # open a folder (several folders: several roots)
 cargo run -- --demo           # open the demo project directly
 cargo run -- --demo --lang pl # in Polish
 cargo run -p ferro_storybook  # component gallery, incl. slow/failing mocks
@@ -35,6 +37,9 @@ crates/
   ferro_workspace/  window, dock, tool windows, editor tabs, toolbar, status bar
   ferro_ui/         themes, icons, shared components
   ferro_services/   service traits + mock implementations
+  ferro_project/    real project files: listing, .gitignore, watcher, file
+                    operations, file index and search (no GUI)
+  ferro_db/         workspace state in SQLite (no GUI)
   ferro_text/       editor core: rope, undo, anchors, selections, edits,
                     search, display map, encodings, atomic saving (no GUI)
   ferro_keymap/     action catalog and keymaps (no GUI)
