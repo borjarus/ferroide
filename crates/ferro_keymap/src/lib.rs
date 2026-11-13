@@ -47,7 +47,9 @@ impl Platform {
 
 /// A keymap scheme the user can choose in Settings → Keymap, on the welcome
 /// screen or with a "Keymap: …" command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum KeymapPreset {
     /// VS Code defaults — FerroIDE's default.

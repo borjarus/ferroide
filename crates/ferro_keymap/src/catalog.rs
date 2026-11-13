@@ -85,6 +85,12 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     a("ferro::NewProject", "action-new-project", File),
     a("ferro::OpenProject", "action-open-project", File),
     a("ferro::GetFromVcs", "action-get-from-vcs", File),
+    a(
+        "ferro::AddFolderToProject",
+        "action-add-folder-to-project",
+        File,
+    ),
+    a("ferro::TrustProject", "action-trust-project", File),
     a("ferro::CloseProject", "action-close-project", File),
     a("ferro::NewWindow", "action-new-window", File),
     a("ferro::Save", "action-save", File),

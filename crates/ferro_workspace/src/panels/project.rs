@@ -149,20 +149,31 @@ pub struct ProjectTree {
     scroll: UniformListScrollHandle,
 }
 
+/// The tree's top-level nodes. A single root shows the project's name;
+/// several roots show their folder names.
+fn root_entries(services: &Services, roots: &[PathBuf]) -> Vec<EntryRef> {
+    roots
+        .iter()
+        .enumerate()
+        .map(|(ix, root)| {
+            let name = match root.file_name() {
+                Some(name) if ix > 0 || roots.len() > 1 => name.to_string_lossy().into_owned(),
+                _ => services.project.name(),
+            };
+            Arc::new(Entry {
+                path: root.clone(),
+                name,
+                kind: EntryKind::Directory,
+                size: 0,
+            })
+        })
+        .collect()
+}
+
 impl ProjectTree {
     pub fn new(services: Services, cx: &mut Context<Self>) -> Self {
         let roots = services.project.roots();
-        let root_entries = roots
-            .iter()
-            .map(|root| {
-                Arc::new(Entry {
-                    path: root.clone(),
-                    name: services.project.name(),
-                    kind: EntryKind::Directory,
-                    size: 0,
-                })
-            })
-            .collect();
+        let root_entries = root_entries(&services, &roots);
         let mut this = Self {
             services,
             roots: roots.clone(),
@@ -208,9 +219,41 @@ impl ProjectTree {
         .detach();
     }
 
+    /// Pick up root folders added to or removed from the project.
+    fn reload_roots(&mut self, cx: &mut Context<Self>) {
+        let roots = self.services.project.roots();
+        let removed: Vec<PathBuf> = self
+            .roots
+            .iter()
+            .filter(|r| !roots.contains(r))
+            .cloned()
+            .collect();
+        for root in &removed {
+            self.children.retain(|dir, _| !dir.starts_with(root));
+            self.expanded.retain(|dir| !dir.starts_with(root));
+        }
+        let added: Vec<PathBuf> = roots
+            .iter()
+            .filter(|r| !self.roots.contains(r))
+            .cloned()
+            .collect();
+        self.root_entries = root_entries(&self.services, &roots);
+        self.roots = roots;
+        for root in added {
+            self.expanded.insert(root.clone());
+            self.load(root, cx);
+        }
+        self.rebuild_rows();
+        cx.notify();
+    }
+
     fn on_project_event(&mut self, event: ProjectEvent, cx: &mut Context<Self>) {
         let path = match &event {
             ProjectEvent::Added(p) | ProjectEvent::Removed(p) | ProjectEvent::Changed(p) => p,
+            ProjectEvent::RootsChanged => {
+                self.reload_roots(cx);
+                return;
+            }
         };
         if let ProjectEvent::Removed(removed) = &event {
             // Forget the removed subtree.

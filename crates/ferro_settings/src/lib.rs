@@ -1,13 +1,19 @@
-//! User settings and small pieces of persisted UI state.
+//! User settings and where FerroIDE keeps its files (ADR-003).
 //!
-//! Global settings live in `<config>/FerroIDE/settings.toml`, keymap
-//! overrides in `<config>/FerroIDE/keymap.toml`, and per-project window
-//! layouts in `<data>/FerroIDE/layouts/<key>.json`. Project-level settings,
-//! JSON Schema and migrations arrive in Stage 4 (see
-//! `docs/FerroIDE_plan.md`).
+//! - Global settings: `<config>/FerroIDE/settings.toml`, described by a JSON
+//!   Schema written next to it (`settings.schema.json`, generated from these
+//!   types) so TOML editors with schema support suggest keys and values.
+//! - Project settings: `<project>/.ferroide/settings.toml`, which may
+//!   override the `[editor]` section (a cloned repository must not change
+//!   the user's keymap or theme).
+//! - Keymap overrides: `<config>/FerroIDE/keymap.toml`.
+//! - Workspace state: `<data>/FerroIDE/state.db` (the `ferro_db` crate). The
+//!   Stage 1–3 layout files in `<data>/FerroIDE/layouts/` are imported once.
 //!
-//! Every read tolerates a missing or broken file by falling back to defaults:
-//! a corrupt settings file must never stop the IDE from starting.
+//! Settings files carry a `version`; [`migrate`] upgrades older files before
+//! they are read. Every read tolerates a missing or broken file by falling
+//! back to defaults: a corrupt settings file must never stop the IDE from
+//! starting.
 
 use std::{
     fs,
@@ -17,9 +23,22 @@ use std::{
 use anyhow::{Context as _, Result};
 use ferro_i18n::Locale;
 use ferro_keymap::{KeymapPreset, UserKeymap};
-use serde::{Deserialize, Deserializer, Serialize};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 pub const APP_DIR: &str = "FerroIDE";
+
+/// The settings file format written by this build. See [`migrate`].
+///
+/// 1: Stage 1 (`keymap = "intellij"`, no `version` key).
+/// 2: Stage 2 — `[keymap]` table with `base` and `vim_mode`.
+pub const SETTINGS_VERSION: u32 = 2;
+
+/// The project settings directory, relative to a project root.
+pub const PROJECT_DIR: &str = ".ferroide";
+
+/// The schema file written next to `settings.toml`.
+pub const SCHEMA_FILE: &str = "settings.schema.json";
 
 /// Default UI font size in pixels; the UI zoom scales it.
 pub const DEFAULT_UI_FONT_SIZE: f32 = 14.0;
@@ -36,18 +55,19 @@ pub mod themes {
 }
 
 /// Global user settings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Settings {
+    /// The file format version; FerroIDE upgrades older files on load.
+    pub version: u32,
     pub appearance: Appearance,
-    #[serde(deserialize_with = "keymap_or_stage1_preset")]
     pub keymap: KeymapSettings,
     pub locale: Locale,
     pub editor: EditorSettings,
 }
 
 /// `[keymap]` in `settings.toml`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct KeymapSettings {
     /// The scheme; the user's `keymap.toml` overrides apply on top.
@@ -57,24 +77,7 @@ pub struct KeymapSettings {
     pub vim_mode: bool,
 }
 
-/// Stage 1 wrote `keymap = "intellij"`; Stage 2 writes a `[keymap]` table.
-fn keymap_or_stage1_preset<'de, D: Deserializer<'de>>(d: D) -> Result<KeymapSettings, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Either {
-        Table(KeymapSettings),
-        Preset(KeymapPreset),
-    }
-    Ok(match Either::deserialize(d)? {
-        Either::Table(table) => table,
-        Either::Preset(base) => KeymapSettings {
-            base,
-            vim_mode: false,
-        },
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Appearance {
     pub theme: String,
@@ -85,7 +88,7 @@ pub struct Appearance {
     pub animations: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct EditorSettings {
     pub font_size: f32,
@@ -111,7 +114,7 @@ pub struct EditorSettings {
 }
 
 /// When the editor saves modified files by itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Autosave {
     /// Only Save / Save All write files.
@@ -144,6 +147,7 @@ impl Autosave {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            version: SETTINGS_VERSION,
             appearance: Appearance::default(),
             keymap: KeymapSettings::default(),
             locale: Locale::from_env(),
@@ -199,12 +203,92 @@ impl Settings {
     }
 
     pub fn from_toml(text: &str) -> Result<Self> {
-        Ok(toml::from_str::<Settings>(text)?.sanitized())
+        let mut table: toml::Table = toml::from_str(text)?;
+        migrate(&mut table);
+        Self::from_table(table)
     }
 
-    pub fn to_toml(&self) -> Result<String> {
-        Ok(toml::to_string_pretty(self)?)
+    fn from_table(table: toml::Table) -> Result<Self> {
+        let mut settings = Settings::deserialize(toml::Value::Table(table))?;
+        settings.version = SETTINGS_VERSION;
+        Ok(settings.sanitized())
     }
+
+    /// The TOML written to `settings.toml`, with a Taplo `#:schema`
+    /// directive pointing at the generated schema.
+    pub fn to_toml(&self) -> Result<String> {
+        let mut settings = self.clone();
+        settings.version = SETTINGS_VERSION;
+        Ok(format!(
+            "#:schema ./{SCHEMA_FILE}\n{}",
+            toml::to_string_pretty(&settings)?
+        ))
+    }
+
+    /// These settings with a project's `.ferroide/settings.toml` applied.
+    /// Only `[editor]` can be overridden; other sections are returned in the
+    /// list and ignored.
+    pub fn with_project_overrides(&self, project_toml: &str) -> Result<(Self, Vec<String>)> {
+        let overrides: toml::Table = toml::from_str(project_toml)?;
+        let mut base = toml::Table::try_from(self)?;
+        let mut ignored = Vec::new();
+        for (key, value) in overrides {
+            match (key.as_str(), value) {
+                ("editor", toml::Value::Table(editor)) => {
+                    if let Some(toml::Value::Table(target)) = base.get_mut("editor") {
+                        merge(target, editor);
+                    }
+                }
+                ("version", _) => {}
+                _ => ignored.push(key),
+            }
+        }
+        Ok((Self::from_table(base)?, ignored))
+    }
+}
+
+/// The JSON Schema of `settings.toml`, generated from [`Settings`].
+pub fn settings_schema() -> serde_json::Value {
+    serde_json::to_value(schemars::schema_for!(Settings)).unwrap_or_default()
+}
+
+/// Deep-merge `overlay` into `base`: tables merge, other values replace.
+pub fn merge(base: &mut toml::Table, overlay: toml::Table) {
+    for (key, value) in overlay {
+        match (base.get_mut(&key), value) {
+            (Some(toml::Value::Table(target)), toml::Value::Table(value)) => merge(target, value),
+            (_, value) => {
+                base.insert(key, value);
+            }
+        }
+    }
+}
+
+/// Upgrade a settings file, in place, to [`SETTINGS_VERSION`]. Returns the
+/// versions it passed through. A file without `version` is version 1; a file
+/// from a newer FerroIDE is left alone (unknown keys are ignored on load).
+pub fn migrate(table: &mut toml::Table) -> Vec<u32> {
+    let mut version = table
+        .get("version")
+        .and_then(toml::Value::as_integer)
+        .map_or(1, |v| v.clamp(0, u32::MAX as i64) as u32);
+    let mut applied = Vec::new();
+    while version < SETTINGS_VERSION {
+        // Stage 1 → 2: `keymap = "<preset>"` becomes `[keymap] base = "<preset>"`.
+        if version == 1
+            && let Some(toml::Value::String(preset)) = table.get("keymap").cloned()
+        {
+            let mut keymap = toml::Table::new();
+            keymap.insert("base".into(), toml::Value::String(preset));
+            table.insert("keymap".into(), toml::Value::Table(keymap));
+        }
+        version += 1;
+        applied.push(version);
+    }
+    if !applied.is_empty() {
+        table.insert("version".into(), toml::Value::Integer(version as i64));
+    }
+    applied
 }
 
 /// Where settings and state are stored. Tests point it at a temp directory.
@@ -238,6 +322,48 @@ impl Paths {
 
     pub fn settings_file(&self) -> PathBuf {
         self.config_dir.join("settings.toml")
+    }
+
+    pub fn schema_file(&self) -> PathBuf {
+        self.config_dir.join(SCHEMA_FILE)
+    }
+
+    /// The workspace state database (`ferro_db`).
+    pub fn state_db_file(&self) -> PathBuf {
+        self.data_dir.join("state.db")
+    }
+
+    /// `<root>/.ferroide/settings.toml`.
+    pub fn project_settings_file(root: &Path) -> PathBuf {
+        root.join(PROJECT_DIR).join("settings.toml")
+    }
+
+    /// `settings` with the project's overrides applied; a missing file
+    /// gives `settings` unchanged, a broken one is logged and ignored.
+    pub fn with_project_settings(settings: &Settings, root: &Path) -> Settings {
+        let path = Self::project_settings_file(root);
+        let Ok(text) = fs::read_to_string(&path) else {
+            return settings.clone();
+        };
+        match settings.with_project_overrides(&text) {
+            Ok((merged, ignored)) => {
+                if !ignored.is_empty() {
+                    tracing::warn!(
+                        "{}: only [editor] can be set per project; ignoring {}",
+                        path.display(),
+                        ignored.join(", ")
+                    );
+                }
+                merged
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "ignoring invalid project settings {}: {err:#}",
+                    path.display()
+                );
+                settings.clone()
+            }
+        }
     }
 
     pub fn keymap_file(&self) -> PathBuf {
@@ -284,11 +410,22 @@ impl Paths {
     }
 
     pub fn save_settings(&self, settings: &Settings) -> Result<()> {
+        self.write_schema()?;
         write_atomic(&self.settings_file(), settings.to_toml()?.as_bytes())
     }
 
-    /// Load a persisted window layout as raw JSON. The UI layer owns its
-    /// schema; this crate only stores it.
+    /// Write `settings.schema.json` when it is missing or out of date.
+    pub fn write_schema(&self) -> Result<()> {
+        let schema = serde_json::to_string_pretty(&settings_schema())?;
+        if fs::read_to_string(self.schema_file()).ok().as_deref() != Some(schema.as_str()) {
+            write_atomic(&self.schema_file(), schema.as_bytes())?;
+        }
+        Ok(())
+    }
+
+    /// Load a window layout saved by Stages 1–3 as raw JSON. From Stage 4
+    /// layouts live in the state database; old files are read once to
+    /// import them.
     pub fn load_layout(&self, key: &str) -> Option<serde_json::Value> {
         let text = fs::read_to_string(self.layout_file(key)).ok()?;
         serde_json::from_str(&text).ok()
@@ -408,6 +545,79 @@ mod tests {
         assert_eq!(partial.appearance.ui_font_size, MAX_UI_FONT_SIZE);
         assert_eq!(partial.appearance.theme, themes::FERRO_DARK);
         assert_eq!(partial.editor, EditorSettings::default());
+    }
+
+    #[test]
+    fn old_files_are_migrated_and_new_ones_carry_a_version() {
+        let mut table: toml::Table = toml::from_str("keymap = \"zed\"").unwrap();
+        assert_eq!(migrate(&mut table), [2]);
+        assert_eq!(table["keymap"]["base"].as_str(), Some("zed"));
+        assert_eq!(table["version"].as_integer(), Some(2));
+        assert!(migrate(&mut table).is_empty());
+
+        let text = Settings::default().to_toml().unwrap();
+        assert!(
+            text.starts_with("#:schema ./settings.schema.json\n"),
+            "{text}"
+        );
+        assert!(text.contains("version = 2"), "{text}");
+        assert_eq!(Settings::from_toml(&text).unwrap(), Settings::default());
+        // A file from a newer FerroIDE still loads.
+        let newer =
+            Settings::from_toml("version = 99\n[editor]\ntab_size = 2\nfuture = 1").unwrap();
+        assert_eq!(newer.editor.tab_size, 2);
+    }
+
+    #[test]
+    fn project_settings_override_only_the_editor() {
+        let mut global = Settings::default();
+        global.editor.tab_size = 4;
+        global.editor.soft_wrap = true;
+        let project = "[editor]\ntab_size = 2\n[appearance]\ntheme = \"Ferro Light\"\n";
+        let (merged, ignored) = global.with_project_overrides(project).unwrap();
+        assert_eq!(merged.editor.tab_size, 2);
+        assert!(
+            merged.editor.soft_wrap,
+            "untouched keys keep the global value"
+        );
+        assert_eq!(merged.appearance, global.appearance);
+        assert_eq!(ignored, ["appearance"]);
+
+        let root = temp_root("project");
+        assert_eq!(Paths::with_project_settings(&global, &root), global);
+        let file = Paths::project_settings_file(&root);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "[editor]\nshow_whitespace = true\n").unwrap();
+        assert!(
+            Paths::with_project_settings(&global, &root)
+                .editor
+                .show_whitespace
+        );
+        fs::write(&file, "[editor\nbroken").unwrap();
+        assert_eq!(Paths::with_project_settings(&global, &root), global);
+    }
+
+    #[test]
+    fn the_schema_describes_the_settings_and_is_written_on_save() {
+        let schema = settings_schema();
+        let props = &schema["properties"];
+        assert!(props["editor"].is_object(), "{schema:#}");
+        let text = schema.to_string();
+        for key in [
+            "tab_size",
+            "autosave",
+            "on_focus_change",
+            "vscode",
+            "jet-brains",
+            "pl",
+        ] {
+            assert!(text.contains(key), "{key} missing from the schema");
+        }
+        let paths = Paths::under(&temp_root("schema"));
+        paths.save_settings(&Settings::default()).unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(paths.schema_file()).unwrap()).unwrap();
+        assert_eq!(written, schema);
     }
 
     #[test]

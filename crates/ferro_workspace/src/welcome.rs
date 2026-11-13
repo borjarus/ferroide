@@ -376,6 +376,7 @@ impl Render for WelcomeScreen {
                                     })
                                     .children(projects.into_iter().enumerate().map(
                                         |(ix, project)| {
+                                            let path = project.path.clone();
                                             let initial: SharedString = project
                                                 .name
                                                 .chars()
@@ -390,9 +391,23 @@ impl Render for WelcomeScreen {
                                                 .rounded(px(6.))
                                                 .cursor_pointer()
                                                 .hover(|el| el.bg(hover))
-                                                .on_click(|_, window, cx| {
-                                                    window
-                                                        .dispatch_action(Box::new(OpenProject), cx)
+                                                .on_click(move |_, _, cx| {
+                                                    // Opening closes this window,
+                                                    // so it happens after the click.
+                                                    let path = path.clone();
+                                                    cx.defer(move |cx| {
+                                                        if let Err(err) =
+                                                            crate::projects::open_recent(
+                                                                path.clone(),
+                                                                cx,
+                                                            )
+                                                        {
+                                                            tracing::error!(
+                                                                "cannot open {}: {err:#}",
+                                                                path.display()
+                                                            );
+                                                        }
+                                                    });
                                                 })
                                                 .child(
                                                     div()

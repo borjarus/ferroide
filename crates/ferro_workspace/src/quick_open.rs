@@ -203,6 +203,16 @@ fn remember(workspace: EntityId, cx: &mut App, edit: impl FnOnce(&mut Recent)) {
     recent.commands.truncate(HISTORY_LIMIT);
 }
 
+/// Start a workspace's file history with files remembered from an earlier
+/// session (most recent first).
+pub(crate) fn seed_recent_files(workspace: EntityId, files: Vec<PathBuf>, cx: &mut App) {
+    remember(workspace, cx, |recent| {
+        for path in files.into_iter().rev() {
+            push_front(&mut recent.files, path);
+        }
+    });
+}
+
 fn push_front<T: PartialEq>(list: &mut Vec<T>, item: T) {
     list.retain(|x| *x != item);
     list.insert(0, item);

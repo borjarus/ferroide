@@ -380,7 +380,7 @@ impl EditorPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<EditorState> {
-        let settings = AppState::settings(cx).editor.clone();
+        let settings = AppState::editor_settings(&self.path, cx).clone();
         let providers = LanguageProviders::new(self.path.clone(), self.services.language.clone());
         // Large files: no highlighting and no soft wrap (plan §5.5).
         let large = self.disk.is_large();
@@ -445,7 +445,8 @@ impl EditorPanel {
         self.set_preview(false, cx);
         self.occurrences.clear();
         self.update_dirty(cx);
-        if self.dirty && AppState::settings(cx).editor.autosave == Autosave::AfterDelay {
+        if self.dirty && AppState::editor_settings(&self.path, cx).autosave == Autosave::AfterDelay
+        {
             self.autosave_task = cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(AUTOSAVE_DELAY).await;
                 let _ = this.update(cx, |this, cx| this.autosave(cx));
@@ -525,7 +526,7 @@ impl EditorPanel {
 
     /// Push the VCS change markers to the editor's gutter strip.
     fn update_gutter(&mut self, cx: &mut Context<Self>) {
-        if !self.is_loaded() || !AppState::settings(cx).editor.vcs_markers {
+        if !self.is_loaded() || !AppState::editor_settings(&self.path, cx).vcs_markers {
             self.gutter.clear(cx);
             return;
         }
@@ -553,7 +554,7 @@ impl EditorPanel {
 
     /// Apply the editor settings when they change (Settings window, toolbar).
     fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let settings = AppState::settings(cx).editor.clone();
+        let settings = AppState::editor_settings(&self.path, cx).clone();
         if self.applied.as_ref() == Some(&settings) {
             return;
         }
@@ -860,7 +861,7 @@ impl EditorPanel {
     fn autosave(&mut self, cx: &mut Context<Self>) {
         if self.dirty
             && self.external.is_none()
-            && AppState::settings(cx).editor.autosave != Autosave::Off
+            && AppState::editor_settings(&self.path, cx).autosave != Autosave::Off
         {
             self.save(cx).detach();
         }

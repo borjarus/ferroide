@@ -464,10 +464,11 @@ impl Workspace {
             let format = e.read(cx).disk().format;
             (format.line_ending, format.encoding, e.downgrade())
         });
-        let indent = tr_args(
-            "editor-status-indent",
-            &[("size", AppState::settings(cx).editor.tab_size.into())],
-        );
+        let tab_size = match &editor {
+            Some(e) => AppState::editor_settings(e.read(cx).path(), cx).tab_size,
+            None => AppState::settings(cx).editor.tab_size,
+        };
+        let indent = tr_args("editor-status-indent", &[("size", tab_size.into())]);
 
         let task = self.status.task.clone().map(|task| {
             h_flex()
