@@ -14,7 +14,7 @@ async-channel.workspace = true
 smol.workspace = true
 tracing.workspace = true
 ignore = "0.4"
-notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+notify = { version = "9", default-features = false, features = ["macos_fsevent"] }
 trash = "5"
 regex = "1"
 ferro_services.workspace = true
