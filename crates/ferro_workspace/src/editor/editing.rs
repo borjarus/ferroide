@@ -28,15 +28,22 @@ impl EditorPanel {
         }
         use EditorCommand::*;
         match command {
-            // GPUI Kit's own commands know every cursor.
-            AddCursorAbove => {
-                state.update(cx, |state, cx| state.focus(window, cx));
-                window.dispatch_action(Box::new(kit_input::AddCursorAbove), cx);
-                return;
-            }
-            AddCursorBelow => {
-                state.update(cx, |state, cx| state.focus(window, cx));
-                window.dispatch_action(Box::new(kit_input::AddCursorBelow), cx);
+            // Multi-cursor: add a cursor on the line above/below.
+            AddCursorAbove | AddCursorBelow => {
+                let up = matches!(command, AddCursorAbove);
+                let tab_size = self.applied.as_ref().map_or(4, |s| s.tab_size);
+                let (rope, selections) = active_selection(state, cx);
+                let new = ops::add_cursor_vertical(&rope, &selections, up, tab_size);
+                // Find the cursor that was added (the one not in the old set).
+                let old_heads: std::collections::HashSet<usize> =
+                    selections.iter().map(|s| s.head).collect();
+                if let Some(added) = new.iter().find(|s| !old_heads.contains(&s.head)) {
+                    let pos = added.head;
+                    state.update(cx, |state, cx| {
+                        state.focus(window, cx);
+                        state.add_selection(pos..pos, cx);
+                    });
+                }
                 return;
             }
             SelectNextOccurrence => {
