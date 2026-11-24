@@ -146,7 +146,7 @@ Legend: ✔ — version verified in November 2026. Others are added with `cargo 
 |---|---|---|---|
 | Language | Rust stable, edition 2024 | 1.99.x ✔ | `rust-toolchain.toml`, bumped every 1–2 releases |
 | GUI | `gpui-kit` (GPUI + gpui-base + gpui-component) | 0.9.x ✔ | one UI dependency |
-| Icons | Lucide (bundled with GPUI Kit) + our own file-type icons | — | no JetBrains assets |
+| Icons | Lucide (bundled with GPUI Kit) + our own file-type icons; application icon in `assets/icons/` ([Appendix E](#appendix-e-application-icon-generated)) | — | no JetBrains assets |
 | Text buffer | `ropey` → later our own rope based on SumTree | 1.x | anchors, multi-buffer |
 | Syntax | `tree-sitter`, `tree-sitter-highlight`, `tree-sitter-*` grammars | 0.26.x ✔ | native or WASM grammars |
 | LSP | `lsp-types` + our own JSON-RPC client (`serde_json`) | latest | full control of cancellation and queues |
@@ -998,3 +998,30 @@ action = "theme::SelectTheme"
 | Iced 0.14 (Plan B): reactive rendering, headless tests, IME support | https://github.com/iced-rs/iced/releases/tag/0.14.0 |
 
 > Library versions change quickly — before starting Stage 0, re-check the current releases (`cargo search`, `cargo outdated`) and update the table in §4.2.
+
+### Appendix E: Application icon (generated)
+
+FerroIDE shares one icon family with its sister application **FerroDb** (database IDE, `ferrodb/assets/icons/`), so the two look like products of the same suite:
+
+| Element | Shared by both apps | FerroIDE | FerroDb |
+|---|---|---|---|
+| Frame | dark "iron" squircle (960/1024, radius 216), vertical gradient `#3a3d43 → #1b1c1f`, 10% white hairline border | — | — |
+| Accent | "rust" gradient `#f59a5b → #c2410c` — exactly one element per glyph | rust slash `/` | rust cylinder lid |
+| Glyph | light gray `#dfe1e5`, rounded caps and joins | code brackets `< >` | database cylinder with two bands |
+
+**Files generated in `assets/icons/` (22 November 2026):**
+
+| File | Purpose |
+|---|---|
+| `ferroide.svg` | master (1024×1024), source of all raster sizes from 48 px up |
+| `ferroide-small.svg` | simplified master with heavier strokes, used for 16–32 px |
+| `ferroide-glyph.svg` | 24×24 monochrome glyph (`currentColor`, Lucide-like stroke 2) — title bar, About dialog, Linux symbolic icon |
+| `ferroide.png` | 1024×1024 PNG (store listings, README) |
+| `png/{16,24,32,48,64,128,256,512,1024}x….png` | per-size PNGs (Linux hicolor theme, AppImage, Flatpak) |
+| `ferroide.ico` | Windows icon, 16–256 px (installer, executable resource) |
+| `ferroide.icns` | macOS icon (app bundle, DMG) |
+
+**Rules:**
+- The SVG masters are the source of truth; rasters are regenerated from them (resvg + Pillow), never edited by hand. Sizes ≤ 32 px always come from `ferroide-small.svg`.
+- Any change to the shared frame or accent must be applied to both FerroIDE and FerroDb in the same way.
+- Stage 14 (packaging): reference the `.ico` / `.icns` / PNG set in the `dist` configuration and embed `ferroide.ico` in the Windows executable (`build.rs` with `winresource`); Linux `.desktop` file uses `Icon=ferroide`.
