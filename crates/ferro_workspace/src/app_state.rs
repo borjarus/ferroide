@@ -92,6 +92,9 @@ impl AppState {
             _config_watcher: config_watcher,
         });
         apply_appearance(cx);
+        // Language Packs: built in, plus `<config>/languages/<id>/`.
+        let user_packs = persist.then(|| AppState::global(cx).paths.config_dir.join("languages"));
+        crate::languages::init(user_packs.as_deref(), cx);
         let keymap = AppState::global(cx).keymap.clone();
         install_keymap(&keymap, None, cx);
         register_app_actions(cx);

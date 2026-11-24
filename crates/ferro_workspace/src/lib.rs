@@ -14,6 +14,7 @@ pub mod dialogs;
 pub mod editor;
 pub mod find_in_files;
 pub mod keymap_page;
+pub mod languages;
 pub mod menus;
 pub mod panels;
 pub mod projects;
@@ -34,6 +35,8 @@ mod tests_projects;
 mod tests_search;
 #[cfg(test)]
 mod tests_settings;
+#[cfg(test)]
+mod tests_syntax;
 #[cfg(test)]
 mod tests_vcs;
 pub mod tool_window;

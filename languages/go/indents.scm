@@ -1,0 +1,16 @@
+[
+  (block)
+  (literal_value)
+  (argument_list)
+  (parameter_list)
+  (import_spec_list)
+  (field_declaration_list)
+  (interface_type)
+  (expression_switch_statement)
+  (type_switch_statement)
+  (select_statement)
+  (const_declaration)
+  (var_declaration)
+] @indent
+
+["}" ")" "]" "case" "default"] @outdent

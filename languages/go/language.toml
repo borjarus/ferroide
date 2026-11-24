@@ -1,0 +1,28 @@
+id = "go"
+name = "Go"
+aliases = ["golang"]
+file_extensions = ["go"]
+project_markers = ["go.mod"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+indent = { unit = "\t", tab_size = 4 }
+auto_pairs = [["(", ")"], ["[", "]"], ["{", "}"], ["\"", "\""], ["`", "`"]]
+decrease_indent_pattern = '^\s*([\}\)\]]|case\b.*:|default:)'
+
+[grammar]
+name = "go"
+queries = ["highlights.scm", "injections.scm", "tags.scm", "folds.scm", "indents.scm", "runnables.scm"]
+
+[[language_servers]]
+id = "gopls"
+command = "gopls"
+install = { go = "golang.org/x/tools/gopls@latest" }
+features = ["completion", "hover", "definition", "references", "rename", "diagnostics", "formatting"]
+
+[debugger]
+adapter = "delve"
+install = { go = "github.com/go-delve/delve/cmd/dlv@latest" }
+
+[[test_frameworks]]
+name = "go test"
+detect = ["go.mod"]

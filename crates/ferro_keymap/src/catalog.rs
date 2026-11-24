@@ -254,6 +254,9 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ),
     a("ferro::AddCursorAbove", "action-add-cursor-above", Editor),
     a("ferro::AddCursorBelow", "action-add-cursor-below", Editor),
+    a("ferro::ExpandSelection", "action-expand-selection", Editor),
+    a("ferro::ShrinkSelection", "action-shrink-selection", Editor),
+    a("ferro::AutoIndentLines", "action-auto-indent-lines", Editor),
     a("ferro::ToggleSoftWrap", "action-toggle-soft-wrap", Editor),
     a(
         "ferro::ToggleWhitespace",

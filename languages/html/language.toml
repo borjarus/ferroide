@@ -1,0 +1,22 @@
+id = "html"
+name = "HTML"
+aliases = ["htm", "xhtml"]
+file_extensions = ["html", "htm", "xhtml"]
+first_line = '(?i)^\s*<!doctype\s+html'
+block_comment = ["<!--", "-->"]
+indent = { unit = "  ", tab_size = 2 }
+brackets = [["<", ">"], ["(", ")"], ["[", "]"], ["{", "}"]]
+auto_pairs = [["\"", "\""], ["'", "'"], ["<!--", " -->"]]
+increase_indent_pattern = '<([-_.A-Za-z0-9]+)(\s[^>]*)?[^/]>\s*$'
+decrease_indent_pattern = '^\s*</[-_.A-Za-z0-9]+>'
+
+[grammar]
+name = "html"
+queries = ["highlights.scm", "injections.scm", "outline.scm", "folds.scm", "indents.scm"]
+
+[[language_servers]]
+id = "vscode-html-language-server"
+command = "vscode-html-language-server"
+args = ["--stdio"]
+install = { npm = "vscode-langservers-extracted" }
+features = ["completion", "hover", "formatting"]

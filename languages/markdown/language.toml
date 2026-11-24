@@ -1,0 +1,21 @@
+id = "markdown"
+name = "Markdown"
+aliases = ["md", "mdx"]
+file_extensions = ["md", "markdown", "mdx", "mkd"]
+file_names = ["README", "CHANGELOG"]
+block_comment = ["<!--", "-->"]
+indent = { unit = "  ", tab_size = 2 }
+brackets = [["[", "]"], ["(", ")"]]
+auto_pairs = [["[", "]"], ["(", ")"], ["`", "`"]]
+syntax_errors = false
+
+[grammar]
+name = "markdown"
+queries = ["highlights.scm", "injections.scm", "outline.scm", "folds.scm"]
+
+[[language_servers]]
+id = "marksman"
+command = "marksman"
+args = ["server"]
+install = { github = "artempyanykh/marksman" }
+features = ["completion", "definition", "references", "rename", "diagnostics"]

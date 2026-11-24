@@ -1,0 +1,21 @@
+id = "sql"
+name = "SQL"
+aliases = ["postgresql", "postgres", "mysql", "sqlite", "plsql", "tsql"]
+file_extensions = ["sql", "ddl", "dml", "pgsql"]
+line_comment = "--"
+block_comment = ["/*", "*/"]
+indent = { unit = "    ", tab_size = 4 }
+brackets = [["(", ")"], ["[", "]"]]
+auto_pairs = [["(", ")"], ["[", "]"], ["'", "'"], ["\"", "\""]]
+syntax_errors = false
+
+[grammar]
+name = "sql"
+queries = ["highlights.scm"]
+
+[[language_servers]]
+id = "postgres-language-server"
+command = "postgres-language-server"
+args = ["lsp-proxy"]
+install = { npm = "@postgres-language-server/cli" }
+features = ["completion", "hover", "diagnostics"]

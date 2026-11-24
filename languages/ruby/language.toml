@@ -1,0 +1,31 @@
+id = "ruby"
+name = "Ruby"
+aliases = ["rb"]
+file_extensions = ["rb", "rake", "gemspec", "ru", "rbw"]
+file_names = ["Gemfile", "Rakefile", "Guardfile", "Vagrantfile", "Brewfile", "Podfile"]
+shebangs = ["ruby", "jruby"]
+project_markers = ["Gemfile"]
+line_comment = "#"
+block_comment = ["=begin", "=end"]
+indent = { unit = "  ", tab_size = 2 }
+auto_pairs = [["(", ")"], ["[", "]"], ["{", "}"], ["\"", "\""], ["'", "'"]]
+increase_indent_pattern = '^\s*(begin|class|def|else|elsif|ensure|for|if|module|rescue|unless|until|when|while|case)\b|\bdo(\s*\|[^|]*\|)?\s*(#.*)?$|\{(\s*\|[^|]*\|)?\s*$'
+decrease_indent_pattern = '^\s*([\}\]]|(end|rescue|ensure|else|elsif|when)\b)'
+
+[grammar]
+name = "ruby"
+queries = ["highlights.scm", "locals.scm", "tags.scm", "folds.scm", "indents.scm", "runnables.scm"]
+
+[[language_servers]]
+id = "ruby-lsp"
+command = "ruby-lsp"
+install = { gem = "ruby-lsp" }
+features = ["completion", "hover", "definition", "diagnostics", "formatting"]
+
+[debugger]
+adapter = "rdbg"
+install = { gem = "debug" }
+
+[[test_frameworks]]
+name = "RSpec"
+detect = [".rspec"]

@@ -1,0 +1,31 @@
+id = "javascript"
+name = "JavaScript"
+aliases = ["js", "jsx", "node"]
+file_extensions = ["js", "mjs", "cjs", "jsx"]
+file_names = [".eslintrc.js"]
+shebangs = ["node", "deno", "bun"]
+project_markers = ["package.json"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+indent = { unit = "  ", tab_size = 2 }
+auto_pairs = [["(", ")"], ["[", "]"], ["{", "}"], ["\"", "\""], ["'", "'"], ["`", "`"]]
+decrease_indent_pattern = '^\s*[\}\)\]]'
+
+[grammar]
+name = "javascript"
+queries = ["highlights.scm", "injections.scm", "locals.scm", "tags.scm", "folds.scm", "indents.scm", "runnables.scm"]
+
+[[language_servers]]
+id = "vtsls"
+command = "vtsls"
+args = ["--stdio"]
+install = { npm = "@vtsls/language-server" }
+features = ["completion", "hover", "definition", "references", "rename", "diagnostics"]
+
+[debugger]
+adapter = "js-debug"
+install = { github = "microsoft/vscode-js-debug" }
+
+[[test_frameworks]]
+name = "vitest"
+detect = ["vitest.config.ts", "vitest.config.js"]

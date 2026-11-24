@@ -323,8 +323,8 @@ fn preview_tabs_are_replaced_and_kept_by_typing(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn files_outside_the_project_open_from_disk(cx: &mut TestAppContext) {
     let (window, ws) = open(cx);
-    let dir = std::env::temp_dir().join(format!("ferro-ed-outside-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().to_path_buf();
     let file = dir.join("settings.toml");
     std::fs::write(&file, "[editor]\ntab_size = 2\n").unwrap();
     let editor = open_editor(cx, window, &ws, file);
@@ -413,8 +413,8 @@ fn view_layer_computations_fit_the_frame_budget_on_50k_lines(cx: &mut TestAppCon
     );
 
     // And the editor itself opens and renders such a file (from disk).
-    let dir = std::env::temp_dir().join(format!("ferro-ed-perf-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().to_path_buf();
     let file = dir.join("generated.rs");
     std::fs::write(&file, &source).unwrap();
     let started = Instant::now();

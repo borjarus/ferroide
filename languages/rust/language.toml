@@ -1,0 +1,34 @@
+id = "rust"
+name = "Rust"
+aliases = ["rs"]
+file_extensions = ["rs"]
+shebangs = ["rust-script"]
+project_markers = ["Cargo.toml"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+indent = { unit = "    ", tab_size = 4 }
+auto_pairs = [["(", ")"], ["[", "]"], ["{", "}"], ["\"", "\""]]
+decrease_indent_pattern = '^\s*[\}\)\]]'
+
+[grammar]
+name = "rust"
+queries = ["highlights.scm", "injections.scm", "tags.scm", "outline.scm", "folds.scm", "indents.scm", "runnables.scm"]
+
+[[language_servers]]
+id = "rust-analyzer"
+command = "rust-analyzer"
+install = { github = "rust-lang/rust-analyzer" }
+features = ["completion", "hover", "definition", "references", "rename", "diagnostics", "formatting", "inlay_hints"]
+
+[debugger]
+adapter = "codelldb"
+install = { github = "vadimcn/codelldb" }
+
+[[run_templates]]
+name = "Cargo: run"
+command = "cargo"
+args = ["run"]
+
+[[test_frameworks]]
+name = "cargo test"
+detect = ["Cargo.toml"]

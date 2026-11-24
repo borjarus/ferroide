@@ -1,0 +1,22 @@
+id = "csharp"
+name = "C#"
+aliases = ["c#", "cs", "c_sharp"]
+file_extensions = ["cs", "csx"]
+project_markers = ["*.csproj", "*.sln"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+indent = { unit = "    ", tab_size = 4 }
+decrease_indent_pattern = '^\s*[\}\)\]]'
+
+[grammar]
+name = "c_sharp"
+queries = ["highlights.scm", "tags.scm", "folds.scm", "indents.scm", "runnables.scm"]
+
+[[language_servers]]
+id = "csharp-ls"
+command = "csharp-ls"
+install = { nuget = "csharp-ls" }
+features = ["completion", "hover", "definition", "references", "rename", "diagnostics"]
+
+[debugger]
+adapter = "netcoredbg"

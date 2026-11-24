@@ -1,0 +1,22 @@
+id = "json"
+name = "JSON"
+aliases = ["jsonc", "json5"]
+file_extensions = ["json", "jsonc", "json5", "code-workspace", "code-snippets"]
+file_names = [".prettierrc", ".babelrc", ".eslintrc", "composer.lock", "flake.lock"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+indent = { unit = "  ", tab_size = 2 }
+brackets = [["[", "]"], ["{", "}"]]
+auto_pairs = [["[", "]"], ["{", "}"], ["\"", "\""]]
+decrease_indent_pattern = '^\s*[\}\]]'
+
+[grammar]
+name = "json"
+queries = ["highlights.scm", "outline.scm", "folds.scm", "indents.scm"]
+
+[[language_servers]]
+id = "vscode-json-language-server"
+command = "vscode-json-language-server"
+args = ["--stdio"]
+install = { npm = "vscode-langservers-extracted" }
+features = ["completion", "hover", "diagnostics", "formatting"]

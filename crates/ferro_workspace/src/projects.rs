@@ -17,6 +17,7 @@ use std::{
 };
 
 use anyhow::Result;
+use ferro_languages::SyntaxLanguageService;
 use ferro_project::{FsProjectService, FsSearchService, ProjectOptions};
 use ferro_services::{Services, mock::MockConfig};
 use ferro_ui::{FerroIcon, tr, tr_args};
@@ -53,6 +54,13 @@ pub fn project_services(roots: Vec<PathBuf>) -> Result<Services> {
     let project = FsProjectService::open_with(roots, ProjectOptions::default())?;
     let mut services = Services::mock(MockConfig::default());
     services.search = Arc::new(FsSearchService::new(project.clone()));
+    // Until language servers (Stage 6): tree-sitter structure, ▶ icons,
+    // syntax errors, completion and a tags-based symbol index.
+    let index = project.index().clone();
+    services.language = Arc::new(SyntaxLanguageService::new(
+        crate::languages::registry(),
+        Arc::new(move || index.snapshot().iter().map(|f| f.path.clone()).collect()),
+    ));
     services.project = Arc::new(project);
     Ok(services)
 }

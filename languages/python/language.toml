@@ -1,0 +1,43 @@
+id = "python"
+name = "Python"
+aliases = ["py", "python3"]
+file_extensions = ["py", "pyi", "pyw"]
+file_names = ["SConstruct", "SConscript"]
+shebangs = ["python", "python3", "python2", "pypy", "uv"]
+project_markers = ["pyproject.toml", "setup.py", "requirements.txt"]
+line_comment = "#"
+block_comment = ['"""', '"""']
+indent = { unit = "    ", tab_size = 4 }
+increase_indent_pattern = '^.*(:|[\{\(\[])\s*(#.*)?$'
+decrease_indent_pattern = '^\s*([\}\)\]]|(elif|else|except|finally)\b.*:)'
+
+[grammar]
+name = "python"
+queries = ["highlights.scm", "injections.scm", "tags.scm", "folds.scm", "indents.scm", "runnables.scm"]
+
+[[language_servers]]
+id = "basedpyright"
+command = "basedpyright-langserver"
+args = ["--stdio"]
+install = { pypi = "basedpyright" }
+features = ["completion", "hover", "definition", "references", "rename", "diagnostics"]
+
+[[language_servers]]
+id = "ruff"
+command = "ruff"
+args = ["server"]
+install = { pypi = "ruff" }
+features = ["diagnostics", "code_actions", "formatting"]
+
+[debugger]
+adapter = "debugpy"
+install = { pypi = "debugpy" }
+
+[[run_templates]]
+name = "Python: current file"
+command = "${interpreter}"
+args = ["${file}"]
+
+[[test_frameworks]]
+name = "pytest"
+detect = ["pytest.ini", "conftest.py"]

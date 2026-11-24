@@ -18,5 +18,8 @@ tracing.workspace = true
 ferro_i18n.workspace = true
 ferro_keymap.workspace = true
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true

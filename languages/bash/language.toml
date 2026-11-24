@@ -1,0 +1,22 @@
+id = "bash"
+name = "Shell Script"
+aliases = ["sh", "shell", "zsh", "shellscript"]
+file_extensions = ["sh", "bash", "zsh", "ksh", "bats", "command"]
+file_names = [".bashrc", ".bash_profile", ".bash_aliases", ".profile", ".zshrc", ".zprofile", ".envrc", "PKGBUILD", "APKBUILD"]
+shebangs = ["sh", "bash", "zsh", "dash", "ksh", "ash"]
+line_comment = "#"
+indent = { unit = "  ", tab_size = 2 }
+auto_pairs = [["(", ")"], ["[", "]"], ["{", "}"], ["\"", "\""], ["'", "'"], ["`", "`"]]
+increase_indent_pattern = '(\{|\bthen|\bdo|\belse|\)|\bin)\s*(#.*)?$'
+decrease_indent_pattern = '^\s*(\}|fi\b|done\b|esac\b|else\b|elif\b|;;)'
+
+[grammar]
+name = "bash"
+queries = ["highlights.scm", "outline.scm", "folds.scm", "indents.scm"]
+
+[[language_servers]]
+id = "bash-language-server"
+command = "bash-language-server"
+args = ["start"]
+install = { npm = "bash-language-server" }
+features = ["completion", "hover", "definition", "references", "diagnostics"]

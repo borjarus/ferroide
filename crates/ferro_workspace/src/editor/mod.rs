@@ -18,6 +18,7 @@ pub mod document;
 mod editing;
 pub mod model;
 pub mod providers;
+mod syntax;
 mod view;
 
 use std::{
@@ -114,6 +115,9 @@ pub enum EditorCommand {
     SelectAllOccurrences,
     AddCursorAbove,
     AddCursorBelow,
+    ExpandSelection,
+    ShrinkSelection,
+    AutoIndentLines,
 }
 
 enum Content {
@@ -183,43 +187,11 @@ pub struct EditorPanel {
     /// further occurrences must be whole words.
     occurrences: Vec<Range<usize>>,
     occurrence_whole_word: bool,
+    /// The language id, detected from the path and text when the file
+    /// loads (a modeline or shebang can decide).
+    language: SharedString,
+    syntax: syntax::SyntaxState,
     _subscriptions: Vec<Subscription>,
-}
-
-/// The language name GPUI Kit's highlighter knows the file by.
-pub fn language_for(path: &Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or_default()
-    {
-        "rs" => "rust",
-        "ts" | "tsx" => "typescript",
-        "js" | "jsx" => "javascript",
-        "json" => "json",
-        "toml" => "toml",
-        "md" => "markdown",
-        "py" => "python",
-        "go" => "go",
-        "java" => "java",
-        _ => "plaintext",
-    }
-}
-
-/// The human-readable language name for the status bar.
-pub fn language_display(path: &Path) -> &'static str {
-    match language_for(path) {
-        "rust" => "Rust",
-        "typescript" => "TypeScript",
-        "javascript" => "JavaScript",
-        "json" => "JSON",
-        "toml" => "TOML",
-        "markdown" => "Markdown",
-        "python" => "Python",
-        "go" => "Go",
-        "java" => "Java",
-        _ => "Plain text",
-    }
 }
 
 fn severity(severity: Severity) -> DiagnosticSeverity {
@@ -241,6 +213,7 @@ impl EditorPanel {
     ) -> Entity<Self> {
         let read = document::load(&path, services, None);
         let services = services.clone();
+        let language = crate::languages::language_for(&path);
         cx.new(|cx| {
             let read = cx.background_spawn(read);
             cx.spawn_in(window, async move |this, cx| {
@@ -341,6 +314,8 @@ impl EditorPanel {
                 autosave_task: Task::ready(()),
                 occurrences: Vec::new(),
                 occurrence_whole_word: false,
+                language,
+                syntax: Default::default(),
                 _subscriptions: Vec::new(),
             };
             this._subscriptions.push(activation);
@@ -362,6 +337,7 @@ impl EditorPanel {
             self.go_to(position, window, cx);
         }
         self.schedule_analysis(Duration::ZERO, cx);
+        self.refresh_syntax(cx);
     }
 
     /// "Open as Text" on a file that looked binary.
@@ -384,10 +360,11 @@ impl EditorPanel {
         let providers = LanguageProviders::new(self.path.clone(), self.services.language.clone());
         // Large files: no highlighting and no soft wrap (plan §5.5).
         let large = self.disk.is_large();
+        self.language = crate::languages::detect(&self.path, &text);
         let language = if large {
-            "plaintext"
+            crate::languages::PLAIN_TEXT.into()
         } else {
-            language_for(&self.path)
+            self.language.clone()
         };
         let read_only = self.disk.is_read_only();
         let state = cx.new(|cx| {
@@ -415,6 +392,7 @@ impl EditorPanel {
         self.gutter = state.update(cx, |state, cx| {
             state.create_gutter_decorations_collection(Vec::new(), cx)
         });
+        self.init_syntax(&state, cx);
         self._subscriptions.push(cx.subscribe_in(
             &state,
             window,
@@ -424,6 +402,8 @@ impl EditorPanel {
                     InputEvent::Blur => this.autosave(cx),
                     _ => {}
                 }
+                // Brackets at the caret, folds after an edit.
+                this.refresh_syntax(cx);
                 cx.emit(EditorEvent::CursorMoved);
             },
         ));
@@ -588,6 +568,31 @@ impl EditorPanel {
         &self.path
     }
 
+    /// The id of the file's language (`rust`, `python`, `text`…).
+    pub fn language(&self) -> &SharedString {
+        &self.language
+    }
+
+    /// The language's display name, for the status bar.
+    pub fn language_name(&self) -> SharedString {
+        crate::languages::display_name(&self.language)
+    }
+
+    /// The active selection as a byte range (empty for a caret).
+    pub fn selection(&self, cx: &App) -> Option<Range<usize>> {
+        self.state().map(|s| s.read(cx).selected_range())
+    }
+
+    /// Select a byte range.
+    pub fn select(&mut self, range: Range<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(state) = self.state().cloned() {
+            state.update(cx, |state, cx| {
+                state.focus(window, cx);
+                state.set_selected_range(range, cx);
+            });
+        }
+    }
+
     pub fn file_name(&self) -> SharedString {
         self.path
             .file_name()
@@ -689,6 +694,13 @@ impl EditorPanel {
                     model::next_problem(&self.analysis.diagnostics, caret, forward)
                 {
                     self.go_to(target, window, cx);
+                }
+            }
+            EditorCommand::ExpandSelection => self.expand_selection(&state, cx),
+            EditorCommand::ShrinkSelection => self.shrink_selection(&state, cx),
+            EditorCommand::AutoIndentLines => {
+                if !self.disk.is_read_only() {
+                    self.auto_indent_lines(&state, window, cx);
                 }
             }
             _ => self.run_text_command(command, &state, window, cx),

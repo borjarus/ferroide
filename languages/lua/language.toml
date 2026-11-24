@@ -1,0 +1,20 @@
+id = "lua"
+name = "Lua"
+file_extensions = ["lua", "luau", "rockspec"]
+file_names = [".luacheckrc"]
+shebangs = ["lua", "luajit"]
+line_comment = "--"
+block_comment = ["--[[", "]]"]
+indent = { unit = "    ", tab_size = 4 }
+increase_indent_pattern = '(\b(then|do|repeat|else)|\bfunction\b[^)]*\)|\{)\s*(--.*)?$'
+decrease_indent_pattern = '^\s*((\b(elseif|else|end|until)\b)|(\})|(\)))'
+
+[grammar]
+name = "lua"
+queries = ["highlights.scm", "injections.scm", "locals.scm", "tags.scm", "folds.scm", "indents.scm"]
+
+[[language_servers]]
+id = "lua-language-server"
+command = "lua-language-server"
+install = { github = "LuaLS/lua-language-server" }
+features = ["completion", "hover", "definition", "references", "rename", "diagnostics", "formatting"]

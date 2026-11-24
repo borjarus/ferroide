@@ -7,13 +7,12 @@
 
 use ferro_text::{
     Rope, Selection, SelectionSet,
-    comment::CommentTokens,
     edit::apply_to_string,
     ops::{self, Change},
 };
-use gpui_kit::{Context, Entity, Window, base::input as kit_input, component::input::EditorState};
+use gpui_kit::{Context, Entity, Window, component::input::EditorState};
 
-use super::{EditorCommand, EditorPanel, language_for};
+use super::{EditorCommand, EditorPanel};
 
 impl EditorPanel {
     pub(super) fn run_text_command(
@@ -57,7 +56,7 @@ impl EditorPanel {
             _ => {}
         }
         let (rope, selections) = active_selection(state, cx);
-        let comments = CommentTokens::for_language(language_for(&self.path));
+        let comments = crate::languages::comment_tokens(&self.language);
         let change = match command {
             DuplicateLineDown => Some(ops::duplicate_lines(&rope, &selections, true)),
             DuplicateLineUp => Some(ops::duplicate_lines(&rope, &selections, false)),
@@ -179,7 +178,7 @@ fn active_selection(
 
 /// Apply a change as one undoable replacement of the span it touches, then
 /// put the selections where the change says.
-fn apply_change(
+pub(super) fn apply_change(
     state: &Entity<EditorState>,
     rope: &Rope,
     change: Change,

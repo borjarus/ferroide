@@ -484,16 +484,18 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn temp_root(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("ferro-settings-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        dir
+    /// A fresh folder for one test, removed when the test ends.
+    fn temp_root(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("ferro-settings-{name}-"))
+            .tempdir()
+            .unwrap()
     }
 
     #[test]
     fn settings_round_trip_through_disk() {
-        let paths = Paths::under(&temp_root("roundtrip"));
+        let root = temp_root("roundtrip");
+        let paths = Paths::under(root.path());
         let mut settings = Settings::default();
         settings.appearance.theme = themes::FERRO_LIGHT.into();
         settings.locale = Locale::Pl;
@@ -522,7 +524,8 @@ mod tests {
 
     #[test]
     fn user_keymap_round_trips_through_disk() {
-        let paths = Paths::under(&temp_root("keymap"));
+        let root = temp_root("keymap");
+        let paths = Paths::under(root.path());
         assert_eq!(paths.load_user_keymap(), UserKeymap::default());
         let mut keymap = UserKeymap::default();
         keymap.set("ferro::QuickOpen", &["ctrl-e".into()]);
@@ -535,7 +538,8 @@ mod tests {
 
     #[test]
     fn broken_or_partial_files_fall_back_to_defaults() {
-        let paths = Paths::under(&temp_root("broken"));
+        let root = temp_root("broken");
+        let paths = Paths::under(root.path());
         fs::create_dir_all(&paths.config_dir).unwrap();
         fs::write(paths.settings_file(), "this is = = not toml").unwrap();
         assert_eq!(paths.load_settings().appearance, Appearance::default());
@@ -583,7 +587,8 @@ mod tests {
         assert_eq!(merged.appearance, global.appearance);
         assert_eq!(ignored, ["appearance"]);
 
-        let root = temp_root("project");
+        let dir = temp_root("project");
+        let root = dir.path().to_path_buf();
         assert_eq!(Paths::with_project_settings(&global, &root), global);
         let file = Paths::project_settings_file(&root);
         fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -613,7 +618,8 @@ mod tests {
         ] {
             assert!(text.contains(key), "{key} missing from the schema");
         }
-        let paths = Paths::under(&temp_root("schema"));
+        let root = temp_root("schema");
+        let paths = Paths::under(root.path());
         paths.save_settings(&Settings::default()).unwrap();
         let written: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(paths.schema_file()).unwrap()).unwrap();
@@ -622,7 +628,8 @@ mod tests {
 
     #[test]
     fn layout_keys_become_safe_file_names() {
-        let paths = Paths::under(&temp_root("layout"));
+        let root = temp_root("layout");
+        let paths = Paths::under(root.path());
         let key = r"C:\Users\me\projects\demo-app";
         let value = serde_json::json!({"center": [1, 2, 3]});
         paths.save_layout(key, &value).unwrap();

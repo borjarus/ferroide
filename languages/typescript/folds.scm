@@ -1,0 +1,16 @@
+[
+  (statement_block)
+  (class_body)
+  (object)
+  (array)
+  (arguments)
+  (formal_parameters)
+  (switch_body)
+  (template_string)
+  (object_pattern)
+  (named_imports)
+  (comment)
+  (interface_body)
+  (enum_body)
+  (object_type)
+] @fold

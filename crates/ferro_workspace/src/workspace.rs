@@ -1658,6 +1658,15 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &AddCursorBelow, window, cx| {
                 this.editor_command(EditorCommand::AddCursorBelow, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &ExpandSelection, window, cx| {
+                this.editor_command(EditorCommand::ExpandSelection, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShrinkSelection, window, cx| {
+                this.editor_command(EditorCommand::ShrinkSelection, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &AutoIndentLines, window, cx| {
+                this.editor_command(EditorCommand::AutoIndentLines, window, cx)
+            }))
             .on_action(cx.listener(|this, _: &TriggerCompletion, window, cx| {
                 this.editor_command(EditorCommand::TriggerCompletion, window, cx)
             }))

@@ -1,0 +1,10 @@
+id = "markdown_inline"
+name = "Markdown (inline)"
+aliases = ["markdown-inline"]
+hidden = true
+brackets = [["[", "]"], ["(", ")"]]
+syntax_errors = false
+
+[grammar]
+name = "markdown_inline"
+queries = ["highlights.scm", "injections.scm"]

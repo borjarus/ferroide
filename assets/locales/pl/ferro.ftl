@@ -81,6 +81,9 @@ action-select-next-occurrence = Dodaj zaznaczenie następnego wystąpienia
 action-select-all-occurrences = Zaznacz wszystkie wystąpienia
 action-add-cursor-above = Dodaj kursor powyżej
 action-add-cursor-below = Dodaj kursor poniżej
+action-expand-selection = Rozszerz zaznaczenie
+action-shrink-selection = Zmniejsz zaznaczenie
+action-auto-indent-lines = Automatyczne wcięcie wierszy
 action-toggle-soft-wrap = Przełącz miękkie zawijanie
 action-toggle-whitespace = Przełącz białe znaki
 action-run = Uruchom
@@ -228,3 +231,4 @@ welcome-days-ago = { $days ->
 ## Stage 2 shared
 feature-coming-soon = Ten widok nie jest jeszcze dostępny.
 tool-services = Usługi
+language-plain-text = Zwykły tekst

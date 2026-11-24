@@ -1,0 +1,23 @@
+id = "cpp"
+name = "C++"
+aliases = ["c++", "cxx"]
+file_extensions = ["cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++", "ipp", "tpp"]
+project_markers = ["CMakeLists.txt", "Makefile", "meson.build"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+indent = { unit = "    ", tab_size = 4 }
+decrease_indent_pattern = '^\s*([\}\)\]]|(case\b.*|default):)'
+
+[grammar]
+name = "cpp"
+queries = ["highlights.scm", "tags.scm", "folds.scm", "indents.scm", "runnables.scm"]
+
+[[language_servers]]
+id = "clangd"
+command = "clangd"
+install = { github = "clangd/clangd" }
+features = ["completion", "hover", "definition", "references", "rename", "diagnostics", "formatting"]
+
+[debugger]
+adapter = "codelldb"
+install = { github = "vadimcn/codelldb" }

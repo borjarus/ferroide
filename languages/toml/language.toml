@@ -1,0 +1,19 @@
+id = "toml"
+name = "TOML"
+file_extensions = ["toml"]
+file_names = ["Cargo.lock", "Pipfile", "uv.lock", "poetry.lock"]
+line_comment = "#"
+indent = { unit = "    ", tab_size = 4 }
+brackets = [["[", "]"], ["{", "}"]]
+decrease_indent_pattern = '^\s*[\}\]]'
+
+[grammar]
+name = "toml"
+queries = ["highlights.scm", "outline.scm", "folds.scm", "indents.scm"]
+
+[[language_servers]]
+id = "taplo"
+command = "taplo"
+args = ["lsp", "stdio"]
+install = { github = "tamasfe/taplo" }
+features = ["completion", "hover", "diagnostics", "formatting"]

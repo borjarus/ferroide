@@ -1,0 +1,47 @@
+[package]
+name = "ferro_languages"
+description = "FerroIDE Language Packs: manifests, language detection, the registry of built-in packs and grammars loaded on demand"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+regex = "1"
+tree-sitter = "0.26"
+ferro_syntax.workspace = true
+ferro_text.workspace = true
+ferro_services.workspace = true
+futures.workspace = true
+anyhow.workspace = true
+tree-sitter-rust = "0.24"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-typescript = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-json = "0.24"
+tree-sitter-md = "0.5"
+tree-sitter-python = "0.25.0"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+tree-sitter-c = "0.24.2"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-c-sharp = "0.24.0"
+tree-sitter-html = "0.23.2"
+tree-sitter-css = "0.25.0"
+tree-sitter-bash = "0.25.1"
+tree-sitter-yaml = "0.7.2"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-lua = "0.5.0"
+tree-sitter-sequel = "0.3.13"
+
+[dev-dependencies]
+tempfile = "3"
+smol.workspace = true
+
+[lints]
+workspace = true

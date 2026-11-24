@@ -99,6 +99,8 @@ pub(crate) const VSCODE: &[Binding] = &[
     e("ctrl-shift-l", "ferro::SelectAllOccurrences"),
     e("ctrl-alt-up", "ferro::AddCursorAbove"),
     e("ctrl-alt-down", "ferro::AddCursorBelow"),
+    e("shift-alt-right", "ferro::ExpandSelection"),
+    e("shift-alt-left", "ferro::ShrinkSelection"),
 ];
 
 pub(crate) const VSCODE_MAC: MacRule = MacRule::CtrlToCmd {
@@ -115,6 +117,8 @@ pub(crate) const VSCODE_MAC: MacRule = MacRule::CtrlToCmd {
         b("cmd-alt-left", "ferro::PreviousTab"),
         b("ctrl--", "ferro::GoBack"),
         b("ctrl-shift--", "ferro::GoForward"),
+        e("ctrl-shift-cmd-right", "ferro::ExpandSelection"),
+        e("ctrl-shift-cmd-left", "ferro::ShrinkSelection"),
     ],
 };
 
@@ -183,6 +187,9 @@ pub(crate) const JETBRAINS: &[Binding] = &[
     e("ctrl-shift-/", "ferro::ToggleBlockComment"),
     e("alt-j", "ferro::SelectNextOccurrence"),
     e("ctrl-alt-shift-j", "ferro::SelectAllOccurrences"),
+    e("ctrl-w", "ferro::ExpandSelection"),
+    e("ctrl-shift-w", "ferro::ShrinkSelection"),
+    e("ctrl-alt-i", "ferro::AutoIndentLines"),
 ];
 
 pub(crate) const JETBRAINS_MAC: MacRule = MacRule::Explicit(&[
@@ -238,6 +245,9 @@ pub(crate) const JETBRAINS_MAC: MacRule = MacRule::Explicit(&[
     e("cmd-alt-/", "ferro::ToggleBlockComment"),
     e("ctrl-g", "ferro::SelectNextOccurrence"),
     e("ctrl-cmd-g", "ferro::SelectAllOccurrences"),
+    e("alt-up", "ferro::ExpandSelection"),
+    e("alt-down", "ferro::ShrinkSelection"),
+    e("ctrl-alt-i", "ferro::AutoIndentLines"),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -299,6 +309,8 @@ pub(crate) const ZED: &[Binding] = &[
     e("ctrl-shift-l", "ferro::SelectAllOccurrences"),
     e("ctrl-alt-up", "ferro::AddCursorAbove"),
     e("ctrl-alt-down", "ferro::AddCursorBelow"),
+    e("shift-alt-right", "ferro::ExpandSelection"),
+    e("shift-alt-left", "ferro::ShrinkSelection"),
 ];
 
 pub(crate) const ZED_MAC: MacRule = MacRule::CtrlToCmd {
@@ -308,6 +320,8 @@ pub(crate) const ZED_MAC: MacRule = MacRule::CtrlToCmd {
         b("cmd-alt-left", "ferro::PreviousTab"),
         b("ctrl--", "ferro::GoBack"),
         b("ctrl-shift--", "ferro::GoForward"),
+        e("ctrl-shift-right", "ferro::ExpandSelection"),
+        e("ctrl-shift-left", "ferro::ShrinkSelection"),
     ],
 };
 
@@ -354,6 +368,7 @@ pub(crate) const SUBLIME: &[Binding] = &[
     e("alt-f3", "ferro::SelectAllOccurrences"),
     e("ctrl-alt-up", "ferro::AddCursorAbove"),
     e("ctrl-alt-down", "ferro::AddCursorBelow"),
+    e("ctrl-shift-space", "ferro::ExpandSelection"),
 ];
 
 pub(crate) const SUBLIME_MAC: MacRule = MacRule::CtrlToCmd {
@@ -403,6 +418,8 @@ pub(crate) const EMACS: &[Binding] = &[
     b("ctrl-x ctrl-s", "ferro::Save"),
     b("ctrl-x s", "ferro::SaveAll"),
     e("alt-;", "ferro::ToggleLineComment"),
+    e("ctrl-=", "ferro::ExpandSelection"),
+    e("ctrl-alt-\\", "ferro::AutoIndentLines"),
 ];
 
 pub(crate) const EMACS_MAC: MacRule = MacRule::Same;

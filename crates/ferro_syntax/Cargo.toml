@@ -1,0 +1,19 @@
+[package]
+name = "ferro_syntax"
+description = "FerroIDE syntax layer on tree-sitter: incremental parsing, highlighting with injections, outline, folding, brackets, indentation, expand/shrink selection, tags and runnables"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The same tree-sitter GPUI Kit's highlighter links, so grammars and trees
+# are shared types.
+tree-sitter = "0.26"
+ferro_text.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

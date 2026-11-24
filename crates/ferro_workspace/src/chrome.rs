@@ -28,10 +28,7 @@ use gpui_kit::{
 use gpui_kit::component::dock::DockPlacement;
 
 use crate::{
-    actions::*,
-    app_state::AppState,
-    editor::{EditorPanel, language_display},
-    tool_window::ToolWindowKind,
+    actions::*, app_state::AppState, editor::EditorPanel, tool_window::ToolWindowKind,
     workspace::Workspace,
 };
 
@@ -452,7 +449,7 @@ impl Workspace {
                 let editor = editor.read(cx);
                 (
                     editor.cursor(cx).map(|(l, c)| format!("{l}:{c}")),
-                    Some(language_display(editor.path())),
+                    Some(editor.language_name()),
                 )
             }
             None => (None, None),

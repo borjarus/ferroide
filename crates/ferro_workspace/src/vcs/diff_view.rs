@@ -127,7 +127,7 @@ impl DiffPanel {
                 cx.background_spawn(async move { anyhow::Ok(diff) })
             }
         };
-        let language = crate::editor::language_for(&self.path);
+        let language = crate::languages::language_for(&self.path);
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -139,7 +139,7 @@ impl DiffPanel {
                         Ok(files) => {
                             let files: Vec<DiffFile> = files
                                 .into_iter()
-                                .map(|f| f.with_language(language))
+                                .map(|f| f.with_language(language.clone()))
                                 .collect();
                             let additions = files.iter().map(DiffFile::additions).sum();
                             let deletions = files.iter().map(DiffFile::deletions).sum();

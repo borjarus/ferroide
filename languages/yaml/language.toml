@@ -1,0 +1,20 @@
+id = "yaml"
+name = "YAML"
+aliases = ["yml"]
+file_extensions = ["yaml", "yml"]
+file_names = [".clang-format", ".clangd"]
+line_comment = "#"
+indent = { unit = "  ", tab_size = 2 }
+brackets = [["[", "]"], ["{", "}"]]
+increase_indent_pattern = ':\s*(#.*)?$'
+
+[grammar]
+name = "yaml"
+queries = ["highlights.scm", "outline.scm", "folds.scm", "indents.scm"]
+
+[[language_servers]]
+id = "yaml-language-server"
+command = "yaml-language-server"
+args = ["--stdio"]
+install = { npm = "yaml-language-server" }
+features = ["completion", "hover", "diagnostics", "formatting"]

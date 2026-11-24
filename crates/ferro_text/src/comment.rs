@@ -1,7 +1,8 @@
 //! Comment syntax per language, used by Toggle Line / Block Comment.
 //!
-//! Until Language Packs arrive (Stage 5) the table lives here; a pack's
-//! manifest will provide the same two fields.
+//! The editor takes the tokens from the file's Language Pack
+//! (`line_comment`, `block_comment`); this table covers languages without a
+//! pack.
 
 /// A language's comment delimiters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -25,6 +25,9 @@ ferro_services.workspace = true
 ferro_text.workspace = true
 ferro_db.workspace = true
 ferro_project.workspace = true
+ferro_syntax.workspace = true
+ferro_languages.workspace = true
+regex = "1"
 async-channel.workspace = true
 
 [dev-dependencies]

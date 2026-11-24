@@ -81,6 +81,9 @@ action-select-next-occurrence = Add Selection to Next Occurrence
 action-select-all-occurrences = Select All Occurrences
 action-add-cursor-above = Add Cursor Above
 action-add-cursor-below = Add Cursor Below
+action-expand-selection = Expand Selection
+action-shrink-selection = Shrink Selection
+action-auto-indent-lines = Auto-Indent Lines
 action-toggle-soft-wrap = Toggle Soft Wrap
 action-toggle-whitespace = Toggle Whitespace
 action-run = Run
@@ -228,3 +231,4 @@ welcome-days-ago = { $days ->
 ## Stage 2 shared
 feature-coming-soon = This view is not available yet.
 tool-services = Services
+language-plain-text = Plain Text

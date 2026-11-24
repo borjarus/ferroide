@@ -149,6 +149,10 @@ pub fn build(cx: &App) -> Vec<Menu> {
                 item("ferro::AddCursorAbove", cx),
                 item("ferro::AddCursorBelow", cx),
                 sep(),
+                item("ferro::ExpandSelection", cx),
+                item("ferro::ShrinkSelection", cx),
+                item("ferro::AutoIndentLines", cx),
+                sep(),
                 checked("ferro::ToggleSoftWrap", settings.editor.soft_wrap, cx),
                 checked(
                     "ferro::ToggleWhitespace",

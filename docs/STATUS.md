@@ -283,3 +283,67 @@ layout / carets / Back / recent files surviving a reopen.
 - Measure the 100k-file DoD on Windows (NTFS + antivirus) and macOS.
 - The Stage 4 window tests run in CI only (the development machine cannot
   build GPUI, see Stage 3).
+
+## Stage 5 — Syntax and Language Packs v1 (milestone M2 "Fast editor")
+
+Two new GUI-free crates and a `languages/` folder of built-in packs. GPUI
+Kit's editor highlights with the packs' grammars and queries; a syntax tree
+per editor tab, kept current on a background thread, serves everything
+else. Projects opened from disk get a tree-sitter `LanguageService` instead
+of the mock until language servers arrive (Stage 6).
+
+| Plan item | Delivered |
+|---|---|
+| `ferro_syntax`: tree-sitter 0.26, incremental parsing, highlight queries, injected languages | ✔ `SyntaxTree::reparse` finds the edit by comparing the old and new rope (common prefix / suffix) and reparses incrementally; `highlights(range)` for a visible range, innermost capture wins; injections parsed on first use, nested up to four levels (`#set! injection.language`, `@injection.language`, `injection.combined`): HTML + JavaScript + CSS, code blocks in Markdown (by fence info string or alias), SQL in Python / Rust / Go strings |
+| File structure, code folding, bracket matching, auto-pairs, smart indentation, Expand / Shrink Selection | ✔ outline from `outline.scm` or `tags.scm` (Structure tool window, breadcrumbs); folds from `folds.scm` (bracketed multi-line nodes otherwise) applied to the editor's fold gutter; the bracket pair at the caret is framed; auto-closing pairs (never in strings or comments) and Enter indentation patterns come from the manifest; `indents.scm` drives the new **Auto-Indent Lines**; **Expand / Shrink Selection** (VS Code Shift+Alt+→/←, JetBrains Ctrl+W / Ctrl+Shift+W, Zed, Sublime, Emacs; macOS variants), also inside injected languages |
+| `ferro_languages`: manifest, detection (extension, file name, shebang, modeline), registry of built-in packs, grammars on demand (also WASM) | ✔ the Appendix B manifest (servers, debugger, run templates and test frameworks are parsed for later stages); detection by modeline (Vim / Emacs), file name, longest extension, shebang (version suffixes ignored), `first_line` regex; 20 built-in packs + Markdown's inline grammar, embedded at build time; user packs from `<config>/languages/` replace built-in ones; a pack's grammar and queries are built when its first file opens. WebAssembly grammars: see deviations |
+| Fallback navigation: symbol index from `tags.scm`, ▶ icons from `runnables.scm` | ✔ `SyntaxLanguageService`: Go to Symbol in Workspace over a project index of definitions (re-indexed per file when its modification time changes); ▶ for `main` and tests in Rust, Python, Go, Java, C#, C/C++ (`main`), JavaScript / TypeScript (`test` / `it` / `describe`), Ruby (RSpec, Minitest). Also: syntax errors as diagnostics (Problems view), completion of the grammar's keywords and the file's words |
+
+Languages (20): Rust, Python, JavaScript, TypeScript, TSX, Go, Java, C, C++,
+C#, HTML, CSS, JSON, TOML, YAML, Markdown, Shell (bash/sh/zsh), Ruby, Lua,
+SQL.
+
+**Definition of Done (M2):**
+
+| Criterion | How it is checked | Result |
+|---|---|---|
+| 15+ languages with highlighting | `ferro_languages` tests `every_builtin_pack_loads_and_compiles`, `fifteen_plus_languages_highlight` (keywords, strings, comments per language); `ferro_workspace` `every_pack_compiles_in_the_editor_highlighter` (GPUI Kit compiles each pack and alias) | ✔ 20 languages |
+| Incremental parsing < 2 ms per edit, 10k-line file, medium profile | `incremental_parse_of_a_ten_thousand_line_file_fits_the_budget` (asserts the median < 2 ms optimized, < 25 ms debug); `cargo run -p ferro_languages --release --example reparse` | Windows, release, this machine: code in modules and `impl` blocks — typing in a name **median 145 µs**, p90 0.19 ms; typing that makes a syntax error 3.6 ms. Worst case, ~1,700 functions at the top level: 3.9–5.4 ms per edit (tree-sitter alone, measured with a plain `&str` too). Full parse of the 10k-line file 60–70 ms (on a background thread) |
+| Suitable for everyday editing as a fast editor | Highlighting, structure, folding, brackets, auto-pairs, indentation, selection and the ▶ icons work without any language server | ✔ |
+
+Tests: `ferro_languages` 8 unit + 12 syntax + 4 service tests;
+`ferro_workspace/src/tests_syntax.rs` 6 headless window tests (every pack in
+GPUI Kit's highlighter, detection by shebang / modeline / extension, comment
+syntax from the pack, Expand / Shrink Selection, Auto-Indent Lines, the
+tree-sitter service on a project from disk).
+
+### Deviations from the plan
+
+- **WebAssembly grammars** are recognized in manifests
+  (`source = { wasm = "…" }`) but report "needs the extension host": loading
+  them needs tree-sitter's `wasm` feature, i.e. wasmtime, which arrives
+  with the extension host (Stage 11). Grammars named by `git` must match a
+  built-in grammar for now.
+- **Two parses per open file**: GPUI Kit's highlighter keeps its own tree
+  for drawing; `ferro_syntax` keeps another for structure, folds, brackets
+  and selection. They share grammars and queries. One tree for both comes
+  with `ferro_editor`.
+- **Smart indentation on Enter** uses the manifest's regex patterns (GPUI
+  Kit's editing rules); the tree-based indentation of `indents.scm` runs on
+  demand (Auto-Indent Lines), not on every Enter.
+- **Folds** from `folds.scm` replace GPUI Kit's generic ones after each
+  parse; right after an edit, GPUI Kit's own candidates show until the
+  background parse finishes.
+- **Incremental parsing in flat files**: files with thousands of top-level
+  items (generated code) take 4–5 ms per edit in tree-sitter itself; the
+  editor reparses on a background thread, so typing is not blocked.
+- **Completion** without a language server offers keywords and words of
+  the file; rename, hover, signature help, quick fixes and inlay hints
+  return nothing on projects from disk until Stage 6. `--demo` keeps the
+  mock language service.
+
+### Open items
+
+- Weak-profile measurement of the reparse budget.
+- More packs (Kotlin, PHP, Swift, Dockerfile, Makefile…) as grammars are
+  added; a pack registry to download them (Stage 11).

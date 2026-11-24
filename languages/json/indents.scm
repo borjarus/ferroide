@@ -1,0 +1,2 @@
+[(object) (array)] @indent
+["}" "]"] @outdent

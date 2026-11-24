@@ -1,0 +1,18 @@
+id = "css"
+name = "CSS"
+aliases = ["scss"]
+file_extensions = ["css"]
+block_comment = ["/*", "*/"]
+indent = { unit = "  ", tab_size = 2 }
+decrease_indent_pattern = '^\s*\}'
+
+[grammar]
+name = "css"
+queries = ["highlights.scm", "outline.scm", "folds.scm", "indents.scm"]
+
+[[language_servers]]
+id = "vscode-css-language-server"
+command = "vscode-css-language-server"
+args = ["--stdio"]
+install = { npm = "vscode-langservers-extracted" }
+features = ["completion", "hover", "diagnostics", "formatting"]
