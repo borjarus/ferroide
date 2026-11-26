@@ -1,14 +1,17 @@
 //! The TODO tool window: TODO and FIXME comments of the project, grouped by
-//! file.
+//! file. A project on disk answers from its index (Stage 7), so the view
+//! follows the index: comments added or removed in any file appear after the
+//! file is saved.
 
-use std::{collections::BTreeMap, ops::Range};
+use std::{collections::BTreeMap, ops::Range, time::Duration};
 
-use ferro_services::{Services, TextPos, TodoItem, TodoKind};
+use ferro_services::{SearchEvent, Services, TextPos, TodoItem, TodoKind};
 use ferro_ui::{FerroIcon, components, tr, tr_args};
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext as _, ClickEvent, Context, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
-    SharedString, StatefulInteractiveElement as _, Styled as _, UniformListScrollHandle, Window,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, UniformListScrollHandle,
+    Window,
     component::{ActiveTheme as _, Icon, Sizable as _, h_flex, spinner::Spinner, v_flex},
     div,
     prelude::FluentBuilder as _,
@@ -38,7 +41,11 @@ pub struct TodoView {
     selected: Option<usize>,
     focus_handle: FocusHandle,
     scroll: UniformListScrollHandle,
+    _updates: Task<()>,
 }
+
+/// Index updates arriving within this window refresh the view once.
+const REFRESH_DEBOUNCE: Duration = Duration::from_millis(300);
 
 pub fn build(services: Services, _window: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|cx| TodoView::new(services, cx)).into()
@@ -46,8 +53,22 @@ pub fn build(services: Services, _window: &mut Window, cx: &mut App) -> AnyView 
 
 impl TodoView {
     pub fn new(services: Services, cx: &mut Context<Self>) -> Self {
+        let events = services.search.subscribe();
+        let updates = cx.spawn(async move |this, cx| {
+            while let Ok(event) = events.recv().await {
+                if event != SearchEvent::Updated {
+                    continue;
+                }
+                cx.background_executor().timer(REFRESH_DEBOUNCE).await;
+                while events.try_recv().is_ok() {}
+                if this.update(cx, |this, cx| this.reload(cx)).is_err() {
+                    return;
+                }
+            }
+        });
         let mut this = Self {
             services,
+            _updates: updates,
             state: State::Loading,
             items: Vec::new(),
             rows: Vec::new(),
@@ -74,6 +95,24 @@ impl TodoView {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Fetch the items again without the loading state, keeping the
+    /// selected row where it is.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        let task = cx.background_spawn(self.services.search.todos());
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Ok(items) = result {
+                    let selected = this.selected;
+                    this.set_items(items);
+                    this.selected = selected.filter(|&ix| ix < this.rows.len());
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     pub fn set_items(&mut self, items: Vec<TodoItem>) {

@@ -410,8 +410,14 @@ impl EditorPanel {
         line_height: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let bookmarks = crate::search::bookmarked_lines(
+            &crate::workspace::project_key(&self.services),
+            &self.path,
+            cx,
+        );
         let theme = cx.theme();
-        let (danger, success, hover) = (theme.danger, theme.success, theme.list_hover);
+        let (danger, success, hover, info) =
+            (theme.danger, theme.success, theme.list_hover, theme.info);
         let mut margin = div()
             .id("editor-glyph-margin")
             .relative()
@@ -427,6 +433,7 @@ impl EditorPanel {
                 .find(|b| b.line == line)
                 .map(|b| b.enabled);
             let runnable = self.analysis.runnables.iter().find(|r| r.line == line);
+            let bookmarked = bookmarks.contains(&line);
             let mut row = h_flex()
                 .id(("glyph-row", line as usize))
                 .absolute()
@@ -437,6 +444,19 @@ impl EditorPanel {
                 .cursor_pointer()
                 .hover(|el| el.bg(hover))
                 .on_click(cx.listener(move |this, _, _, cx| this.toggle_breakpoint(line, cx)))
+                // A bookmark: a bar along the margin's left edge.
+                .when(bookmarked, |el| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(2.))
+                            .w(px(3.))
+                            .h(px((line_height - 4.).max(2.)))
+                            .rounded_sm()
+                            .bg(info),
+                    )
+                })
                 .child(div().w(px(16.)).flex().justify_center().when_some(
                     breakpoint,
                     |el, enabled| {

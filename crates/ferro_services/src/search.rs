@@ -1,5 +1,8 @@
 //! Project-wide search: files by name (Quick Open), text (Find in Files) and
 //! TODO comments.
+//!
+//! Stage 7 adds search scopes and file masks to [`TextQuery`], index events
+//! ([`SearchEvent`]) and a typing signal that pauses background indexing.
 
 use std::{ops::Range, path::PathBuf};
 
@@ -26,8 +29,49 @@ pub struct TextQuery {
     /// Treat `text` as a regular expression. The mock supports only literal
     /// text and reports an error for regex queries it cannot handle.
     pub regex: bool,
-    /// Only files whose relative path contains this (e.g. `src/`, `.rs`).
+    /// File mask: comma-separated globs (`*.rs, src/**`) or plain text the
+    /// relative path must contain (`src/`); `!` excludes (`!target/**`). A
+    /// pattern without `/` matches the file name anywhere.
     pub path_filter: Option<String>,
+    /// Which files to search.
+    pub scope: SearchScope,
+}
+
+/// Where Find in Files looks.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SearchScope {
+    /// Every file of the project.
+    #[default]
+    Project,
+    /// Files under a directory (recursively).
+    Directory(PathBuf),
+    /// Exactly these files (e.g. the open editors).
+    Files(Vec<PathBuf>),
+    /// Files whose relative path matches a file mask (a named scope from
+    /// the settings); evaluated by the service, like `path_filter`.
+    Mask(String),
+}
+
+impl SearchScope {
+    /// Whether `path` is inside the scope.
+    pub fn contains(&self, path: &std::path::Path) -> bool {
+        match self {
+            SearchScope::Project => true,
+            SearchScope::Directory(dir) => path.starts_with(dir),
+            SearchScope::Files(files) => files.iter().any(|f| f == path),
+            SearchScope::Mask(_) => true,
+        }
+    }
+}
+
+/// Progress of the project index, for the status bar and views that show
+/// indexed data (TODO).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchEvent {
+    /// Background indexing: `done` of `total` files.
+    Indexing { done: usize, total: usize },
+    /// Indexed data changed (files, symbols or TODO comments).
+    Updated,
 }
 
 /// One line containing at least one match.
@@ -68,4 +112,11 @@ pub trait SearchService: Send + Sync + 'static {
         limit: usize,
     ) -> BoxFuture<'static, Result<Vec<TextMatch>>>;
     fn todos(&self) -> BoxFuture<'static, Result<Vec<TodoItem>>>;
+    /// Index progress and updates. The default never sends anything.
+    fn subscribe(&self) -> async_channel::Receiver<SearchEvent> {
+        async_channel::unbounded().1
+    }
+    /// The user is typing: background indexing pauses for a moment so it
+    /// does not compete with the editor.
+    fn user_activity(&self) {}
 }

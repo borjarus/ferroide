@@ -148,6 +148,24 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     a("ferro::FindInFiles", "action-find-in-files", Navigate),
     a("ferro::ReplaceInFiles", "action-replace-in-files", Navigate),
     a(
+        "ferro::UndoReplaceInFiles",
+        "action-undo-replace-in-files",
+        Navigate,
+    ),
+    a(
+        "ferro::RecentLocations",
+        "action-recent-locations",
+        Navigate,
+    ),
+    a("ferro::ToggleBookmark", "action-toggle-bookmark", Navigate),
+    a("ferro::NextBookmark", "action-next-bookmark", Navigate),
+    a(
+        "ferro::PreviousBookmark",
+        "action-previous-bookmark",
+        Navigate,
+    ),
+    a("ferro::ShowBookmarks", "action-show-bookmarks", Navigate),
+    a(
         "ferro::SelectOpenedFile",
         "action-select-opened-file",
         Navigate,

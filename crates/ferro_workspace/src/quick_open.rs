@@ -3,6 +3,10 @@
 //! none = files, `>` = commands, `@` = symbols in the file, `#` = workspace
 //! symbols, `:` = go to line, `%` = text search.
 //!
+//! Two modes have no prefix and are opened by their actions: Recent
+//! Locations (the places visited, newest first) and Bookmarks. The
+//! Command Palette also finds settings (Stage 7).
+//!
 //! Queries run on the background executor; every query bumps a generation
 //! counter, so results of a query the user has already typed past are
 //! dropped. Recently used files and commands come first, per workspace.
@@ -39,7 +43,7 @@ use gpui_kit::{
 
 use crate::{
     app_state::AppState, chrome::display_keystroke, editor::EditorPanel, requests::OpenLocation,
-    workspace::Workspace,
+    settings_window::SettingKey, workspace::Workspace,
 };
 
 /// What the popup searches, selected by the query prefix.
@@ -51,6 +55,10 @@ pub enum QuickOpenMode {
     SymbolsInWorkspace,
     GoToLine,
     Text,
+    /// Opened by `ferro::RecentLocations`; no prefix.
+    RecentLocations,
+    /// Opened by `ferro::ShowBookmarks`; no prefix.
+    Bookmarks,
 }
 
 impl QuickOpenMode {
@@ -63,10 +71,18 @@ impl QuickOpenMode {
         QuickOpenMode::Text,
     ];
 
+    /// Modes chosen by their action rather than a prefix.
+    pub fn is_fixed(self) -> bool {
+        matches!(
+            self,
+            QuickOpenMode::RecentLocations | QuickOpenMode::Bookmarks
+        )
+    }
+
     /// The query prefix that selects the mode.
     pub fn prefix(self) -> &'static str {
         match self {
-            QuickOpenMode::Files => "",
+            QuickOpenMode::Files | QuickOpenMode::RecentLocations | QuickOpenMode::Bookmarks => "",
             QuickOpenMode::Commands => ">",
             QuickOpenMode::SymbolsInFile => "@",
             QuickOpenMode::SymbolsInWorkspace => "#",
@@ -93,6 +109,8 @@ impl QuickOpenMode {
             QuickOpenMode::SymbolsInWorkspace => "search-mode-symbols-workspace",
             QuickOpenMode::GoToLine => "search-mode-line",
             QuickOpenMode::Text => "search-mode-text",
+            QuickOpenMode::RecentLocations => "search-mode-recent-locations",
+            QuickOpenMode::Bookmarks => "search-mode-bookmarks",
         }
     }
 
@@ -104,6 +122,9 @@ impl QuickOpenMode {
             QuickOpenMode::SymbolsInWorkspace => "search-placeholder-symbols-workspace",
             QuickOpenMode::GoToLine => "search-placeholder-line",
             QuickOpenMode::Text => "search-placeholder-text",
+            QuickOpenMode::RecentLocations | QuickOpenMode::Bookmarks => {
+                "search-placeholder-locations"
+            }
         }
     }
 
@@ -113,6 +134,8 @@ impl QuickOpenMode {
             QuickOpenMode::Commands => "search-no-commands",
             QuickOpenMode::SymbolsInFile | QuickOpenMode::SymbolsInWorkspace => "search-no-symbols",
             QuickOpenMode::GoToLine | QuickOpenMode::Text => "search-no-text",
+            QuickOpenMode::RecentLocations => "search-no-recent-locations",
+            QuickOpenMode::Bookmarks => "search-no-bookmarks",
         }
     }
 
@@ -476,6 +499,14 @@ pub enum QuickOpenItem {
         line_text: SharedString,
         ranges: Vec<Range<usize>>,
     },
+    /// A setting found from the Command Palette; opens the Settings window
+    /// at it.
+    Setting {
+        key: SettingKey,
+        title: SharedString,
+        page: SharedString,
+        positions: Vec<usize>,
+    },
     /// A hint or validation message; not selectable.
     Message(SharedString),
 }
@@ -531,9 +562,78 @@ impl QuickOpenItem {
                 line_text,
                 ..
             } => format!("{relative}:{}, {}", line + 1, line_text.trim()).into(),
+            QuickOpenItem::Setting { title, page, .. } => format!("{title}, {page}").into(),
             QuickOpenItem::Message(m) => m.clone(),
         }
     }
+}
+
+/// Settings whose label matches `query` (nothing for an empty query: the
+/// palette then lists commands only).
+pub fn setting_items(query: &str) -> Vec<QuickOpenItem> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+    let lowered = query.trim().to_lowercase();
+    let mut scored: Vec<(i64, QuickOpenItem)> = SettingKey::ALL
+        .into_iter()
+        .filter_map(|key| {
+            let title = key.label();
+            let m = fuzzy_match(query, &title).or_else(|| {
+                key.matches(&lowered).then(|| FuzzyMatch {
+                    score: -40,
+                    positions: Vec::new(),
+                })
+            })?;
+            Some((
+                m.score,
+                QuickOpenItem::Setting {
+                    key,
+                    page: format!("{} · {}", tr("search-setting"), tr(key.page().title_key()))
+                        .into(),
+                    title,
+                    positions: m.positions,
+                },
+            ))
+        })
+        .collect();
+    scored.sort_by_key(|item| std::cmp::Reverse(item.0));
+    scored.into_iter().map(|(_, item)| item).collect()
+}
+
+/// Visited or bookmarked places as rows, filtered by `query`.
+fn location_items(
+    places: &[(PathBuf, u32, String)],
+    root: &Path,
+    query: &str,
+) -> Vec<QuickOpenItem> {
+    let mut scored: Vec<(i64, usize, QuickOpenItem)> = places
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, (path, line, snippet))| {
+            let relative = relative_to(root, path);
+            let haystack = format!("{relative}:{} {snippet}", line + 1);
+            let m = fuzzy_match(query, &haystack)?;
+            let ranges = fuzzy_match(query, snippet)
+                .map(|m| position_ranges(snippet, &m.positions))
+                .unwrap_or_default();
+            Some((
+                m.score,
+                ix,
+                QuickOpenItem::Text {
+                    path: path.clone(),
+                    relative: relative.into(),
+                    line: *line,
+                    line_text: snippet.clone().into(),
+                    ranges,
+                },
+            ))
+        })
+        .collect();
+    if !query.trim().is_empty() {
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    }
+    scored.into_iter().map(|(_, _, item)| item).collect()
 }
 
 /// Commands matching `query`, recently used first; with an empty query,
@@ -738,6 +838,8 @@ pub struct QuickOpen {
     recent_files: Vec<PathBuf>,
     recent_commands: Vec<&'static str>,
     symbols: Option<Vec<FlatSymbol>>,
+    /// Places for the Recent Locations and Bookmarks modes.
+    places: Vec<(PathBuf, u32, String)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -768,6 +870,20 @@ impl QuickOpen {
         });
         let recent_files = recent_files(workspace, cx);
         let recent_commands = history(workspace_id, cx).commands;
+        let places = match mode {
+            QuickOpenMode::RecentLocations => AppState::global(cx)
+                .db
+                .recent_locations(workspace.project_key())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| (r.location.path, r.location.line, r.snippet))
+                .collect(),
+            QuickOpenMode::Bookmarks => crate::search::bookmarks(workspace.project_key(), cx)
+                .into_iter()
+                .map(|b| (b.path, b.line, b.snippet))
+                .collect(),
+            _ => Vec::new(),
+        };
 
         let input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -802,6 +918,7 @@ impl QuickOpen {
             recent_files,
             recent_commands,
             symbols: None,
+            places,
             _subscriptions: vec![subscription],
         };
         this.on_query_changed(window, cx);
@@ -834,7 +951,11 @@ impl QuickOpen {
 
     fn on_query_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let full = self.input.read(cx).value().to_string();
-        let (mode, rest) = QuickOpenMode::parse(&full);
+        let (mode, rest) = if self.mode.is_fixed() {
+            (self.mode, full.as_str())
+        } else {
+            QuickOpenMode::parse(&full)
+        };
         if mode != self.mode {
             self.mode = mode;
             self.input.update(cx, |input, cx| {
@@ -856,7 +977,12 @@ impl QuickOpen {
         match self.mode {
             QuickOpenMode::Commands => {
                 let keymap = AppState::global(cx).keymap.clone();
-                let items = command_items(&query, &keymap, &self.recent_commands);
+                let mut items = command_items(&query, &keymap, &self.recent_commands);
+                items.extend(setting_items(&query));
+                self.set_items(items, window, cx);
+            }
+            QuickOpenMode::RecentLocations | QuickOpenMode::Bookmarks => {
+                let items = location_items(&self.places, &self.root, &query);
                 self.set_items(items, window, cx);
             }
             QuickOpenMode::Files if query.trim().is_empty() => {
@@ -1154,6 +1280,12 @@ impl QuickOpen {
                     window.dispatch_action(action, cx);
                 }
             }
+            QuickOpenItem::Setting { key, title, .. } => {
+                let _ = workspace.update(cx, |_, cx| {
+                    let view = crate::settings_window::show(key.page(), window, cx);
+                    view.update(cx, |v, cx| v.set_search(&title, window, cx));
+                });
+            }
             QuickOpenItem::Line { position } => {
                 if let Some(editor) = self.active.as_ref().and_then(|a| a.editor.upgrade()) {
                     editor.update(cx, |e, cx| e.go_to(position, window, cx));
@@ -1266,6 +1398,18 @@ impl QuickOpen {
                         highlighted(name.clone(), position_ranges(&name, &positions))
                             .into_any_element(),
                         Some(detail),
+                        None,
+                    ),
+                    QuickOpenItem::Setting {
+                        title,
+                        page,
+                        positions,
+                        ..
+                    } => (
+                        Some(FerroIcon::Settings),
+                        highlighted(title.clone(), position_ranges(&title, &positions))
+                            .into_any_element(),
+                        Some(page),
                         None,
                     ),
                     QuickOpenItem::Line { .. } => (

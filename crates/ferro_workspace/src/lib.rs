@@ -22,6 +22,7 @@ pub mod panels;
 pub mod projects;
 pub mod quick_open;
 pub mod requests;
+pub mod search;
 pub mod settings_window;
 #[cfg(test)]
 mod tests;

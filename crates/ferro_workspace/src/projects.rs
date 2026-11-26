@@ -1,8 +1,8 @@
 //! Real projects (plan §8, Stage 4): opening a folder from disk, reopening
 //! recent projects, adding root folders, and trusted projects.
 //!
-//! A project opened from disk runs on `FsProjectService`,
-//! `FsSearchService` and language servers (`LspLanguageService`, with the
+//! A project opened from disk runs on `FsProjectService`, the persistent
+//! project index (`ferro_index::ProjectIndex`, Stage 7) and language servers (`LspLanguageService`, with the
 //! tree-sitter service as its fallback); the other services stay mocks
 //! until their stages (run: 8, VCS: 9, debugger: 10).
 //!
@@ -18,9 +18,10 @@ use std::{
 };
 
 use anyhow::Result;
+use ferro_index::{IndexOptions, ProjectIndex};
 use ferro_languages::SyntaxLanguageService;
 use ferro_lsp::{LspLanguageService, LspOptions, ProcessLauncher};
-use ferro_project::{FsProjectService, FsSearchService, ProjectOptions};
+use ferro_project::{FsProjectService, ProjectOptions};
 use ferro_services::{Services, mock::MockConfig};
 use ferro_ui::{FerroIcon, tr, tr_args};
 use gpui_kit::{
@@ -58,11 +59,12 @@ impl Global for WelcomeWindows {}
 pub fn project_services(
     roots: Vec<PathBuf>,
     lsp: LspOptions,
+    index: IndexOptions,
 ) -> Result<(Services, Arc<LspLanguageService>)> {
     let launcher = Arc::new(ProcessLauncher {
         install_dir: lsp.install_dir.clone(),
     });
-    project_services_with(roots, lsp, launcher)
+    project_services_with(roots, lsp, index, launcher)
 }
 
 /// [`project_services`] with servers started by `launcher` (tests run
@@ -70,17 +72,19 @@ pub fn project_services(
 pub fn project_services_with(
     roots: Vec<PathBuf>,
     lsp: LspOptions,
+    index: IndexOptions,
     launcher: Arc<dyn ferro_lsp::Launcher>,
 ) -> Result<(Services, Arc<LspLanguageService>)> {
     let project = FsProjectService::open_with(roots, ProjectOptions::default())?;
     let mut services = Services::mock(MockConfig::default());
-    services.search = Arc::new(FsSearchService::new(project.clone()));
+    // Files, symbols and TODO comments, stored between sessions.
+    let index = ProjectIndex::open(project.clone(), crate::languages::registry(), index)?;
+    services.search = Arc::new(index.clone());
     // Without a server: tree-sitter structure, ▶ icons, syntax errors,
-    // completion and a tags-based symbol index.
-    let index = project.index().clone();
-    let fallback = SyntaxLanguageService::new(
+    // completion, and Go to Symbol from the index.
+    let fallback = SyntaxLanguageService::with_symbol_index(
         crate::languages::registry(),
-        Arc::new(move || index.snapshot().iter().map(|f| f.path.clone()).collect()),
+        index.symbol_search(),
     );
     let project = Arc::new(project);
     let roots_of = project.clone();
@@ -96,6 +100,7 @@ pub fn project_services_with(
     services.status = Arc::new(crate::lsp::LspStatus {
         inner: services.status.clone(),
         language: language.clone(),
+        search: Some(services.search.clone()),
     });
     services.project = project;
     Ok((services, language))
@@ -106,7 +111,8 @@ pub fn open_project(
     roots: Vec<PathBuf>,
     cx: &mut App,
 ) -> Result<(AnyWindowHandle, Entity<Workspace>)> {
-    let (services, language) = project_services(roots, crate::lsp::options(cx))?;
+    let index = crate::search::index_options(&roots, cx);
+    let (services, language) = project_services(roots, crate::lsp::options(cx), index)?;
     crate::lsp::register(&language, cx);
     let roots = services.project.roots();
     let db = AppState::global(cx).db.clone();

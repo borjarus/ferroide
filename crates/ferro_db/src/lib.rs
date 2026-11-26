@@ -84,6 +84,17 @@ pub const MIGRATIONS: &[&str] = &[
         trusted INTEGER NOT NULL
     );
     "#,
+    // 2: Stage 7 bookmarks.
+    r#"
+    CREATE TABLE bookmarks (
+        project TEXT NOT NULL,
+        path    TEXT NOT NULL,
+        line    INTEGER NOT NULL,
+        snippet TEXT NOT NULL,
+        created INTEGER NOT NULL,
+        PRIMARY KEY (project, path, line)
+    );
+    "#,
 ];
 
 /// How many entries each history keeps per project.
@@ -113,6 +124,14 @@ pub struct RecentLocation {
     pub snippet: String,
     /// Milliseconds since the Unix epoch.
     pub visited: i64,
+}
+
+/// A bookmarked line (0-based) with its text when it was bookmarked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bookmark {
+    pub path: PathBuf,
+    pub line: u32,
+    pub snippet: String,
 }
 
 /// A recently opened project.
@@ -482,6 +501,72 @@ impl StateDb {
                 },
                 snippet: row.get(3)?,
                 visited: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    // -----------------------------------------------------------------------
+    // Bookmarks
+    // -----------------------------------------------------------------------
+
+    /// Bookmark a line (0-based), or remove the bookmark it has. Returns
+    /// whether the line is bookmarked afterwards.
+    pub fn toggle_bookmark(
+        &self,
+        project: &str,
+        path: &Path,
+        line: u32,
+        snippet: &str,
+    ) -> Result<bool> {
+        let now = self.now();
+        let conn = self.conn();
+        let removed = conn.execute(
+            "DELETE FROM bookmarks WHERE project = ?1 AND path = ?2 AND line = ?3",
+            params![project, text(path), line],
+        )?;
+        if removed > 0 {
+            return Ok(false);
+        }
+        conn.execute(
+            "INSERT INTO bookmarks (project, path, line, snippet, created)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![project, text(path), line, snippet.trim(), now],
+        )?;
+        Ok(true)
+    }
+
+    /// Replace the bookmarks of a file (after its lines moved).
+    pub fn set_bookmarks(&self, project: &str, path: &Path, lines: &[(u32, String)]) -> Result<()> {
+        let now = self.now();
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM bookmarks WHERE project = ?1 AND path = ?2",
+            params![project, text(path)],
+        )?;
+        for (line, snippet) in lines {
+            tx.execute(
+                "INSERT OR IGNORE INTO bookmarks (project, path, line, snippet, created)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![project, text(path), line, snippet.trim(), now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Every bookmark of a project, by file and line.
+    pub fn bookmarks(&self, project: &str) -> Result<Vec<Bookmark>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT path, line, snippet FROM bookmarks WHERE project = ?1 ORDER BY path, line",
+        )?;
+        let rows = stmt.query_map(params![project], |row| {
+            Ok(Bookmark {
+                path: PathBuf::from(row.get::<_, String>(0)?),
+                line: row.get(1)?,
+                snippet: row.get(2)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)

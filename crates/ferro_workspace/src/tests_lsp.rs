@@ -94,9 +94,13 @@ fn open(cx: &mut TestAppContext, trusted: bool) -> Opened {
         state: state.clone(),
     });
     let (window, ws) = cx.update(|cx| {
-        let (services, language) =
-            projects::project_services_with(vec![root.clone()], crate::lsp::options(cx), launcher)
-                .unwrap();
+        let (services, language) = projects::project_services_with(
+            vec![root.clone()],
+            crate::lsp::options(cx),
+            ferro_index::IndexOptions::default(),
+            launcher,
+        )
+        .unwrap();
         crate::lsp::register(&language, cx);
         services.language.clone().set_trusted(trusted);
         crate::open_workspace(services, cx).unwrap()

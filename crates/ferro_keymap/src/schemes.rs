@@ -108,6 +108,10 @@ pub(crate) const VSCODE: &[Binding] = &[
     e("shift-alt-h", "ferro::CallHierarchy"),
     e("shift-alt-f", "ferro::FormatDocument"),
     e("shift-alt-o", "ferro::OrganizeImports"),
+    // Bookmarks: the keys of VS Code's popular Bookmarks extension.
+    e("ctrl-alt-k", "ferro::ToggleBookmark"),
+    b("ctrl-alt-l", "ferro::NextBookmark"),
+    b("ctrl-alt-j", "ferro::PreviousBookmark"),
 ];
 
 pub(crate) const VSCODE_MAC: MacRule = MacRule::CtrlToCmd {
@@ -205,9 +209,15 @@ pub(crate) const JETBRAINS: &[Binding] = &[
     e("ctrl-h", "ferro::TypeHierarchy"),
     e("ctrl-alt-l", "ferro::FormatDocument"),
     e("ctrl-alt-o", "ferro::OrganizeImports"),
+    e("f11", "ferro::ToggleBookmark"),
+    b("shift-f11", "ferro::ShowBookmarks"),
+    b("ctrl-shift-e", "ferro::RecentLocations"),
 ];
 
 pub(crate) const JETBRAINS_MAC: MacRule = MacRule::Explicit(&[
+    e("f3", "ferro::ToggleBookmark"),
+    b("cmd-f3", "ferro::ShowBookmarks"),
+    b("cmd-shift-e", "ferro::RecentLocations"),
     e("cmd-b", "ferro::GoToDefinition"),
     e("cmd-alt-b", "ferro::GoToImplementation"),
     e("ctrl-shift-b", "ferro::GoToTypeDefinition"),
@@ -367,6 +377,9 @@ pub(crate) const SUBLIME: &[Binding] = &[
     b("alt-shift--", "ferro::GoForward"),
     b("ctrl-shift-f", "ferro::FindInFiles"),
     b("ctrl-space", "ferro::TriggerCompletion"),
+    e("ctrl-f2", "ferro::ToggleBookmark"),
+    b("f2", "ferro::NextBookmark"),
+    b("shift-f2", "ferro::PreviousBookmark"),
     b("f4", "ferro::NextProblem"),
     b("shift-f4", "ferro::PreviousProblem"),
     b("ctrl-k ctrl-b", "ferro::ToggleLeftDock"),

@@ -147,12 +147,13 @@ impl SearchService for MockSearchService {
                 .map(str::trim)
                 .filter(|f| !f.is_empty());
             let wanted = |rel: &str| filter.is_none_or(|f| rel.contains(f));
+            let scope = query.scope.clone();
 
             let mut files: Vec<(PathBuf, String, String)> = project
                 .demo_files()
                 .into_iter()
                 .filter_map(|(p, text)| project.relative(&p).map(|rel| (p, rel, text)))
-                .filter(|(_, rel, _)| wanted(rel))
+                .filter(|(p, rel, _)| wanted(rel) && scope.contains(p))
                 .collect();
             let mut out = Vec::new();
             let scan = |path: PathBuf, rel: &str, text: &str, out: &mut Vec<TextMatch>| {

@@ -37,6 +37,10 @@ const MAX_ERRORS: usize = 50;
 /// Lists the files of the project, for the symbol index.
 pub type FileLister = Arc<dyn Fn() -> Vec<PathBuf> + Send + Sync>;
 
+/// Searches a persistent symbol index (`ferro_index`) by name: query and
+/// limit in, best matches out.
+pub type SymbolSearch = Arc<dyn Fn(&str, usize) -> Vec<Symbol> + Send + Sync>;
+
 /// A file's definitions and the modification time they were read at.
 type IndexedFile = (Option<SystemTime>, Vec<Symbol>);
 
@@ -54,6 +58,8 @@ struct Inner {
     diagnostics: Mutex<HashMap<PathBuf, Vec<Diagnostic>>>,
     /// Definitions per file on disk, with the file's modification time.
     index: Mutex<HashMap<PathBuf, IndexedFile>>,
+    /// A persistent index that answers Go to Symbol instead of `index`.
+    symbol_search: Option<SymbolSearch>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -69,9 +75,45 @@ impl SyntaxLanguageService {
                 trees: Mutex::new(Vec::new()),
                 diagnostics: Mutex::new(HashMap::new()),
                 index: Mutex::new(HashMap::new()),
+                symbol_search: None,
             }),
         }
     }
+
+    /// A service whose Go to Symbol in Workspace asks a persistent index
+    /// (Stage 7) instead of parsing project files on demand.
+    pub fn with_symbol_index(registry: Arc<LanguageRegistry>, search: SymbolSearch) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                registry,
+                files: Arc::new(Vec::new),
+                trees: Mutex::new(Vec::new()),
+                diagnostics: Mutex::new(HashMap::new()),
+                index: Mutex::new(HashMap::new()),
+                symbol_search: Some(search),
+            }),
+        }
+    }
+}
+
+/// The definitions of a file for a project-wide symbol index: flat, with
+/// their containers, without children. `None` when no Language Pack
+/// matches or the file does not parse.
+pub fn file_symbols(
+    registry: &Arc<LanguageRegistry>,
+    path: &Path,
+    text: &str,
+) -> Option<Vec<Symbol>> {
+    let head: String = text.lines().take(5).collect::<Vec<_>>().join(
+        "
+",
+    );
+    let pack = registry.detect(path, Some(&head))?.clone();
+    let mut symbols = index_file(&pack, registry, path, text)?;
+    for symbol in &mut symbols {
+        symbol.children.clear();
+    }
+    Some(symbols)
 }
 
 impl Inner {
@@ -209,6 +251,9 @@ impl Inner {
     /// Definitions of every project file, from the index (files changed on
     /// disk since they were indexed are parsed again).
     fn workspace_symbols(&self, query: &str) -> Vec<Symbol> {
+        if let Some(search) = &self.symbol_search {
+            return search(query, 200);
+        }
         let files = (self.files)();
         let mut index = lock(&self.index);
         let present: HashSet<&PathBuf> = files.iter().collect();

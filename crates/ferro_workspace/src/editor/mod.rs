@@ -436,6 +436,8 @@ impl EditorPanel {
     }
 
     fn on_text_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Background indexing waits while the user types.
+        self.services.search.user_activity();
         // Typing in a preview tab keeps it.
         self.set_preview(false, cx);
         self.occurrences.clear();

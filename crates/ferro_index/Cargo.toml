@@ -1,0 +1,32 @@
+[package]
+name = "ferro_index"
+description = "Persistent project index (files, symbols, TODO, trigrams) and fast search for FerroIDE"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+async-channel.workspace = true
+smol.workspace = true
+tracing.workspace = true
+regex = "1"
+globset = "0.4"
+rusqlite = { version = "0.42", features = ["bundled"] }
+nucleo-matcher = "0.3"
+grep-searcher = "0.1"
+grep-regex = "0.1"
+grep-matcher = "0.1"
+ferro_services.workspace = true
+ferro_project.workspace = true
+ferro_languages.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

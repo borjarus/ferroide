@@ -65,6 +65,30 @@ pub struct Settings {
     pub locale: Locale,
     pub editor: EditorSettings,
     pub lsp: LspSettings,
+    pub search: SearchSettings,
+}
+
+/// `[search]`: Find in Files and the project index (Stage 7).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SearchSettings {
+    /// The trigram index speeds up Find in Files in very large
+    /// repositories at the cost of disk space: `auto` turns it on above
+    /// 2 GB of files.
+    pub trigram_index: TrigramIndex,
+    /// Named scopes for Find in Files: a name and a file mask, e.g.
+    /// `tests = "tests/**, *_test.go"`.
+    pub scopes: std::collections::BTreeMap<String, String>,
+}
+
+/// `[search] trigram_index`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TrigramIndex {
+    #[default]
+    Auto,
+    On,
+    Off,
 }
 
 /// `[lsp]`: language servers (Stage 6).
@@ -196,6 +220,7 @@ impl Default for Settings {
             locale: Locale::from_env(),
             editor: EditorSettings::default(),
             lsp: LspSettings::default(),
+            search: SearchSettings::default(),
         }
     }
 }

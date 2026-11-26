@@ -14,7 +14,8 @@ use std::{
 
 use ferro_lsp::{LspLanguageService, LspOptions, ServerSettings};
 use ferro_services::{
-    LanguageServerStatus, LanguageService, NotificationEntry, StatusService, TaskProgress,
+    LanguageServerStatus, LanguageService, NotificationEntry, SearchEvent, SearchService,
+    StatusService, TaskProgress,
 };
 use ferro_settings::LspSettings;
 use gpui_kit::{App, Global};
@@ -101,6 +102,8 @@ pub fn service_of(
 pub struct LspStatus {
     pub inner: Arc<dyn StatusService>,
     pub language: Arc<dyn LanguageService>,
+    /// The project index: its progress is the background task.
+    pub search: Option<Arc<dyn SearchService>>,
 }
 
 impl StatusService for LspStatus {
@@ -109,7 +112,33 @@ impl StatusService for LspStatus {
     }
 
     fn subscribe_tasks(&self) -> async_channel::Receiver<TaskProgress> {
-        self.inner.subscribe_tasks()
+        let Some(search) = &self.search else {
+            return self.inner.subscribe_tasks();
+        };
+        // Indexing progress becomes the status bar's background task.
+        let events = search.subscribe();
+        let (tx, rx) = async_channel::unbounded();
+        let spawned = std::thread::Builder::new()
+            .name("ferro-index-progress".into())
+            .spawn(move || {
+                while let Ok(event) = events.recv_blocking() {
+                    if let SearchEvent::Indexing { done, total } = event {
+                        let progress = TaskProgress {
+                            id: 7_000,
+                            title_key: "task-indexing".into(),
+                            fraction: Some(done as f32 / total.max(1) as f32),
+                            done: done >= total,
+                        };
+                        if tx.send_blocking(progress).is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+        if let Err(err) = spawned {
+            tracing::warn!("cannot follow indexing progress: {err}");
+        }
+        rx
     }
 
     fn notifications(&self) -> Vec<NotificationEntry> {

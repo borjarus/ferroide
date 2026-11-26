@@ -972,6 +972,9 @@ impl Workspace {
             && (from.path != location.path
                 || location.position.is_some_and(|p| Some(p) != from.position))
         {
+            // Jumps (definitions, search results, bookmarks) are visits
+            // Recent Locations lists, like switching tabs.
+            self.record_location(&from, cx);
             self.push_back(from);
             self.nav_forward.clear();
         }

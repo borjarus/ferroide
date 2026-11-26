@@ -450,3 +450,64 @@ trusted.
 - First run of the `lsp` CI job; a Java job (JDK and a jdtls download).
 - `ferro_editor`: snippet sessions, code lens, links, on-typing
   formatting, inline hints.
+
+## Stage 7 — Navigation and search
+
+A new GUI-free crate, `ferro_index`, is the project index and the search
+engine. A project opened from disk now runs on `ProjectIndex` as its
+`SearchService` (it replaces Stage 4's `FsSearchService`), and the
+tree-sitter fallback answers Go to Symbol from the index instead of parsing
+the project on every query. `--demo` keeps the mocks.
+
+| Plan item | Delivered |
+|---|---|
+| Quick Open on real data: files (nucleo) | ✔ `ferro_index::fuzzy` on `nucleo-matcher`: nucleo's query syntax (words, `^`, `$`, `'`, `!`), path bonuses, a file-name bonus for the last word; the next keystroke rescores only what the previous query matched; above 20k candidates the scoring runs on several threads |
+| Classes and symbols (index + LSP `workspace/symbol`) | ✔ symbols of every file from the Language Packs' `tags.scm`/`outline.scm`, stored in the index; `#` / Go to Symbol in Workspace merges them with `workspace/symbol` of the running servers (Stage 6) |
+| Actions, settings, text | ✔ `>` lists commands and, for a non-empty query, settings (Enter opens the Settings window searched for it); `%` is text search over the index |
+| Find / Replace in Files: ripgrep libraries, regex, file masks | ✔ `grep-searcher` + `grep-regex` on whole files read in parallel (a byte-regex prefilter rejects non-matching files first); masks `*.rs, src/**, !target/**` (`globset`; plain text still means "path contains") |
+| Scopes (project, directory, scope) | ✔ Project, Directory (a field, starting at the active file's folder), Open files, and named scopes from `[search.scopes]` (`tests = "tests/**, *_test.go"`) |
+| Preview and replace with undo in one operation | ✔ the preview shows each match before → after with regex groups (`$1`, `${name}`); Replace All changes open files in their editors and the others on disk, and records the operation: **Navigate ▸ Undo Replace in Files** (`ferro::UndoReplaceInFiles`) restores every file still as the replacement left it and reports those changed since |
+| `ferro_index`: persistent file and symbol index in SQLite | ✔ `<data>/index/<name>-<hash>.sqlite` per set of roots (files, symbols, TODO comments, trigrams); loaded at startup, so Quick Open (the stored file list), Go to Symbol and TODO answer before the scan ends; a different schema version is rebuilt, never migrated |
+| Updated incrementally in the background, paused while typing | ✔ after the scan, size and modification time of every file are compared with the database, changed files are re-indexed and missing ones forgotten; then the watcher's events keep it current. Every keystroke in an editor pauses indexing for 500 ms (`SearchService::user_activity`). Progress is the status bar's background task |
+| Optional trigram index for repositories above a few GB | ✔ `[search] trigram_index = "auto"` (on above 2 GB of files), `"on"`, `"off"`; literal queries search only files holding all their trigrams, plus files changed or not indexed yet. Regex queries scan everything |
+| TODO panel | ✔ from the index; refreshes itself when indexed data changes |
+| Bookmarks (Ctrl+Alt+K) | ✔ Toggle / Next / Previous Bookmark and **Bookmarks…** (a Quick Open list); stored per project in the state database (migration 2), drawn as a bar in the glyph margin. VS Code: Ctrl+Alt+K / L / J (the Bookmarks extension's keys); JetBrains: F11, Shift+F11 (macOS F3, ⌘F3); Sublime Text: Ctrl+F2, F2, Shift+F2 |
+| Recent Locations | ✔ **Navigate ▸ Recent Locations…** (JetBrains Ctrl+Shift+E / ⌘⇧E): a Quick Open list of visited places, newest first, with the line's text; Quick Open gained modes without a prefix for this and Bookmarks |
+
+**Definition of Done — the §6.2 budgets for Quick Open and Find in Files:**
+
+| Budget | How it is checked | Result (Windows 11, 12 threads, release, antivirus on) |
+|---|---|---|
+| Quick Open, 100k files, < 30 ms (medium) / < 60 ms (weak) per keystroke | `cargo run -p ferro_index --release --example search_bench` types five queries character by character over 100k synthetic monorepo paths with `PathMatcher` (the code behind Quick Open) | p50 4.1 ms, p99 14.9 ms, worst keystroke 17.7 ms ✔ |
+| Find in Files, 1 GB repository, < 1 s (medium) / < 3 s (weak) | the same example with `--mb 1024`: 20,971 files of 50 kB, warm OS cache, median of three runs; it also measures reading every file without searching | full scan (no match) 0.82–1.48 s between runs, reading alone 0.6–1.0 s on this machine; a query that fills the 2,000-line result limit 0.64–0.85 s. Weak profile ✔; medium profile at the budget, bounded by file I/O here (see open items) |
+
+Tests: `ferro_index` 19 unit and headless tests (masks, replacement with
+groups, parallel search in path order with the limit, nucleo ranking and
+narrowing, trigrams; on real folders: symbols and TODO, ignored files,
+surviving a restart and catching up with changes made while closed, edits
+and removals followed live, scopes and masks, the trigram index, the typing
+pause). `ferro_db` bookmarks; `ferro_workspace/src/search.rs` bookmark
+order; `tests_search.rs` drives the window: Replace All on open and closed
+files and its undo, regex groups, scopes, bookmarks, Recent Locations,
+settings in the Command Palette.
+
+### Deviations from the plan
+
+- **Find in Files searches files on disk**, not unsaved editor text
+  (autosave writes it when focus leaves the editor).
+- **Files that are not UTF-8 are skipped by Replace All** rather than
+  re-encoded; the notification counts them.
+- **Bookmarks keep their line number**: they do not follow lines inserted
+  above them until `ferro_editor` brings anchors to the view.
+- **No Bookmarks tool window**: the list is a Quick Open mode.
+- **The trigram index narrows literal queries only**; required literals of
+  a regular expression are not extracted.
+- **Stage 4's `FsSearchService` stays** in `ferro_project` (tests, tools)
+  but windows no longer use it.
+
+### Open items
+
+- Medium-profile Find in Files on a machine without real-time antivirus
+  scanning, and both budgets on the weak profile and on Linux/macOS.
+- Release builds on this machine run out of memory with full parallelism
+  (`cargo build -j 2` works); the benchmark was built without LTO.

@@ -10,7 +10,9 @@ use ferro_services::{FileMatch, Services, TextPos, mock::MockConfig};
 use ferro_settings::{Paths, Settings};
 use gpui_kit::{
     AnyWindowHandle, AppContext as _, Bounds, Entity, Point, TestAppContext, WindowBounds,
-    WindowOptions, component::dock::DockPlacement, px, size,
+    WindowOptions,
+    component::{WindowExt as _, dock::DockPlacement},
+    px, size,
 };
 
 use crate::{
@@ -447,32 +449,274 @@ fn find_in_files_filters_toggles_and_reports_regex_errors(cx: &mut TestAppContex
     );
 }
 
+fn disk_text(cx: &mut TestAppContext, ws: &Entity<Workspace>, path: &std::path::Path) -> String {
+    let read = cx.read(|cx| ws.read(cx).services.project.read_file(path));
+    smol::block_on(read).unwrap()
+}
+
+fn editor_text(cx: &mut TestAppContext, ws: &Entity<Workspace>, path: &std::path::Path) -> String {
+    cx.read(|cx| {
+        ws.read(cx)
+            .editors
+            .iter()
+            .find(|e| e.read(cx).path() == path)
+            .and_then(|e| e.read(cx).text(cx))
+            .unwrap()
+    })
+}
+
+fn result_paths(cx: &mut TestAppContext, view: &Entity<FindInFiles>) -> Vec<PathBuf> {
+    cx.read(|cx| {
+        view.read(cx)
+            .results()
+            .iter()
+            .map(|m| m.path.clone())
+            .collect()
+    })
+}
+
 #[gpui_kit::test]
-fn replace_all_rewrites_open_files_only(cx: &mut TestAppContext) {
+fn replace_all_rewrites_open_and_closed_files_and_undoes_at_once(cx: &mut TestAppContext) {
+    let (window, ws) = open(cx);
+    let root = root(cx, &ws);
+    // `web/src/app.ts` stays closed: it is rewritten on disk.
+    let (lib, main) = (root.join("src/lib.rs"), root.join("web/src/app.ts"));
+    with(cx, window, &ws, |ws, w, cx| {
+        ws.open_file(lib.clone(), w, cx)
+    });
+    let main_before = disk_text(cx, &ws, &main);
+    let lib_before = editor_text(cx, &ws, &lib);
+    assert!(main_before.contains("greet("));
+
+    let view = find(cx, window, &ws, true, "greet");
+    view_do(cx, window, &view, |v, w, cx| {
+        v.set_replacement("welcome", w, cx)
+    });
+    let (count, files, pending) = view_do(cx, window, &view, |v, w, cx| v.replace_all(w, cx));
+    assert!(count >= 1 && files >= 1, "lib.rs is open: {count} {files}");
+    assert!(pending >= 1, "app.ts is written on disk");
+    settle(cx);
+    let lib_after = editor_text(cx, &ws, &lib);
+    assert!(lib_after.contains("welcome") && !lib_after.contains("greet("));
+    let main_after = disk_text(cx, &ws, &main);
+    assert!(
+        main_after.contains("welcome(") && !main_after.contains("greet("),
+        "{main_after}"
+    );
+
+    let id = ws.entity_id();
+    assert!(cx.read(|cx| crate::search::can_undo_replace(id, cx)));
+    with(cx, window, &ws, |ws, w, cx| {
+        crate::search::undo_replace(ws, w, cx)
+    });
+    settle(cx);
+    assert_eq!(editor_text(cx, &ws, &lib), lib_before);
+    assert_eq!(disk_text(cx, &ws, &main), main_before);
+    assert!(!cx.read(|cx| crate::search::can_undo_replace(id, cx)));
+}
+
+#[gpui_kit::test]
+#[allow(clippy::single_range_in_vec_init)]
+fn regex_replacement_substitutes_groups(cx: &mut TestAppContext) {
+    let (window, ws) = open(cx);
+    let root = root(cx, &ws);
+    let lib = root.join("src/lib.rs");
+    with(cx, window, &ws, |ws, w, cx| {
+        ws.open_file(lib.clone(), w, cx)
+    });
+    let view = find(cx, window, &ws, true, "");
+    // The mock search service has no regular expressions: hand the view
+    // the match the real service would find.
+    let text = editor_text(cx, &ws, &lib);
+    let (line, line_text) = text
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("fn greet("))
+        .map(|(i, l)| (i as u32, l.to_string()))
+        .unwrap();
+    view_do(cx, window, &view, |v, w, cx| {
+        v.toggle_regex(w, cx);
+        v.set_query(r"fn (greet)\(", w, cx);
+        v.set_replacement("fn ${1}_all(", w, cx);
+    });
+    let start = line_text.find("fn greet(").unwrap();
+    view_do(cx, window, &view, |v, w, cx| {
+        v.set_results(
+            vec![ferro_services::TextMatch {
+                path: lib.clone(),
+                relative: "src/lib.rs".into(),
+                line,
+                line_text: line_text.clone(),
+                ranges: vec![start..start + "fn greet(".len()],
+            }],
+            w,
+            cx,
+        )
+    });
+    view_do(cx, window, &view, |v, w, cx| v.replace_all(w, cx));
+    settle(cx);
+    let text = editor_text(cx, &ws, &lib);
+    assert!(text.contains("fn greet_all("), "{text}");
+}
+
+#[gpui_kit::test]
+fn scopes_limit_the_search(cx: &mut TestAppContext) {
     let (window, ws) = open(cx);
     let root = root(cx, &ws);
     with(cx, window, &ws, |ws, w, cx| {
         ws.open_file(root.join("src/lib.rs"), w, cx)
     });
-    let view = find(cx, window, &ws, true, "greet");
+    let view = find(cx, window, &ws, false, "greet");
+    let all = result_paths(cx, &view);
+    assert!(all.iter().any(|p| p.ends_with("main.rs")), "{all:?}");
+
     view_do(cx, window, &view, |v, w, cx| {
-        v.set_replacement("welcome", w, cx)
+        v.set_scope(find_in_files::ScopeChoice::OpenFiles, w, cx)
     });
-    let (count, files, skipped) = view_do(cx, window, &view, |v, w, cx| v.replace_all(w, cx));
-    assert!(count >= 2, "lib.rs and main.rs mention greet");
-    assert!(files >= 1);
-    assert!(skipped >= 1, "web/src/app.ts is not open");
-    let text = cx.read(|cx| {
+    settle(cx);
+    let open = result_paths(cx, &view);
+    let editors: Vec<PathBuf> = cx.read(|cx| {
         ws.read(cx)
             .editors
             .iter()
-            .find(|e| e.read(cx).path() == root.join("src/lib.rs"))
-            .and_then(|e| e.read(cx).text(cx))
-            .unwrap()
+            .map(|e| e.read(cx).path().to_path_buf())
+            .collect()
     });
+    assert!(open.iter().any(|p| p.ends_with("lib.rs")));
+    assert!(open.iter().all(|p| editors.contains(p)), "{open:?}");
     assert!(
-        text.contains("welcome") && !text.contains("greet("),
-        "{text}"
+        open.len() < all.len(),
+        "web/src/app.ts is not open: {all:?}"
+    );
+
+    view_do(cx, window, &view, |v, w, cx| {
+        v.set_directory("web", w, cx);
+        v.set_scope(find_in_files::ScopeChoice::Directory, w, cx);
+    });
+    settle(cx);
+    let web = result_paths(cx, &view);
+    assert!(!web.is_empty());
+    assert!(
+        web.iter().all(|p| p.starts_with(root.join("web"))),
+        "{web:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn bookmarks_toggle_list_and_cycle(cx: &mut TestAppContext) {
+    let (window, ws) = open(cx);
+    let root = root(cx, &ws);
+    let main = root.join("src/main.rs");
+    with(cx, window, &ws, |ws, w, cx| {
+        ws.open_file(main.clone(), w, cx)
+    });
+    let editor = cx.read(|cx| ws.read(cx).active_editor_entity().unwrap());
+    let caret_to = |cx: &mut TestAppContext, line: u32| {
+        cx.update_window(window, |_, w, cx| {
+            editor.update(cx, |e, cx| e.go_to(TextPos::new(line, 0), w, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    let caret_line =
+        |cx: &mut TestAppContext| cx.read(|cx| editor.read(cx).caret(cx)).map(|p| p.line);
+    for line in [1, 4] {
+        caret_to(cx, line);
+        let added = with(cx, window, &ws, |ws, _, cx| {
+            crate::search::toggle_bookmark(ws, cx)
+        });
+        assert_eq!(added, Some(true));
+    }
+    let key = cx.read(|cx| ws.read(cx).project_key().to_string());
+    assert_eq!(
+        cx.read(|cx| crate::search::bookmarked_lines(&key, &main, cx)),
+        vec![1, 4]
+    );
+
+    let view = with(cx, window, &ws, |ws, w, cx| {
+        quick_open::open_view(ws, QuickOpenMode::Bookmarks, w, cx)
+    });
+    settle(cx);
+    let lines: Vec<u32> = items(cx, &view)
+        .iter()
+        .filter_map(|i| match i {
+            QuickOpenItem::Text { line, .. } => Some(*line),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines, vec![1, 4]);
+    cx.update_window(window, |_, w, cx| w.close_dialog(cx))
+        .unwrap();
+
+    caret_to(cx, 2);
+    with(cx, window, &ws, |ws, w, cx| {
+        crate::search::jump_to_bookmark(ws, true, w, cx)
+    });
+    assert_eq!(caret_line(cx), Some(4));
+    with(cx, window, &ws, |ws, w, cx| {
+        crate::search::jump_to_bookmark(ws, true, w, cx)
+    });
+    assert_eq!(caret_line(cx), Some(1), "wraps around");
+
+    caret_to(cx, 4);
+    let added = with(cx, window, &ws, |ws, _, cx| {
+        crate::search::toggle_bookmark(ws, cx)
+    });
+    assert_eq!(added, Some(false));
+    assert_eq!(
+        cx.read(|cx| crate::search::bookmarked_lines(&key, &main, cx)),
+        vec![1]
+    );
+}
+
+#[gpui_kit::test]
+fn recent_locations_list_visited_places(cx: &mut TestAppContext) {
+    let (window, ws) = open(cx);
+    let root = root(cx, &ws);
+    for (file, line) in [("src/main.rs", 3), ("src/lib.rs", 1)] {
+        let location = crate::requests::OpenLocation::at(root.join(file), TextPos::new(line, 0));
+        with(cx, window, &ws, |ws, w, cx| {
+            ws.open_location(&location, w, cx)
+        });
+    }
+    let view = with(cx, window, &ws, |ws, w, cx| {
+        quick_open::open_view(ws, QuickOpenMode::RecentLocations, w, cx)
+    });
+    settle(cx);
+    let found = items(cx, &view);
+    assert!(
+        found
+            .iter()
+            .any(|i| matches!(i, QuickOpenItem::Text { path, .. } if path.ends_with("main.rs"))),
+        "{found:?}"
+    );
+    // Typing filters; there is no prefix to switch modes.
+    view_do(cx, window, &view, |v, w, cx| v.set_query("main", w, cx));
+    assert_eq!(
+        cx.read(|cx| view.read(cx).mode()),
+        QuickOpenMode::RecentLocations
+    );
+    let filtered = items(cx, &view);
+    assert!(!filtered.is_empty());
+    assert!(
+        filtered.iter().all(
+            |i| matches!(i, QuickOpenItem::Text { relative, .. } if relative.contains("main"))
+        ),
+        "{filtered:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn the_command_palette_finds_settings(cx: &mut TestAppContext) {
+    let (window, ws) = open(cx);
+    let view = quick_open(cx, window, &ws, ">soft wrap");
+    let found = items(cx, &view);
+    assert!(
+        found.iter().any(|i| matches!(
+            i,
+            QuickOpenItem::Setting { key, .. } if *key == crate::settings_window::SettingKey::SoftWrap
+        )),
+        "{found:?}"
     );
 }
 

@@ -180,3 +180,25 @@ fn trust_covers_subfolders() {
     db.untrust(&work).unwrap();
     assert!(!db.is_trusted(&work.join("app")).unwrap());
 }
+
+#[test]
+fn bookmarks_toggle_and_move() {
+    let db = StateDb::open_in_memory().unwrap();
+    let file = std::path::Path::new("/p/src/main.rs");
+    assert!(db.toggle_bookmark("p", file, 3, "  fn main() {").unwrap());
+    assert!(db.toggle_bookmark("p", file, 9, "x").unwrap());
+    assert!(db.toggle_bookmark("other", file, 1, "y").unwrap());
+    let marks = db.bookmarks("p").unwrap();
+    assert_eq!(marks.len(), 2);
+    assert_eq!(marks[0].line, 3);
+    assert_eq!(marks[0].snippet, "fn main() {");
+    assert!(
+        !db.toggle_bookmark("p", file, 3, "").unwrap(),
+        "toggled off"
+    );
+    db.set_bookmarks("p", file, &[(10, "x".into()), (12, "z".into())])
+        .unwrap();
+    let lines: Vec<u32> = db.bookmarks("p").unwrap().iter().map(|b| b.line).collect();
+    assert_eq!(lines, vec![10, 12]);
+    assert_eq!(db.bookmarks("other").unwrap().len(), 1);
+}

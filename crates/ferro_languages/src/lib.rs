@@ -29,7 +29,7 @@ mod builtin {
 
 pub use manifest::LanguageManifest;
 pub use registry::{LanguagePack, LanguageRegistry, PackError};
-pub use service::SyntaxLanguageService;
+pub use service::{SymbolSearch, SyntaxLanguageService, file_symbols};
 
 #[cfg(test)]
 mod tests;

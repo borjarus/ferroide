@@ -2,14 +2,23 @@
 //!
 //! The search is debounced (200 ms) and runs on the background executor;
 //! results arrive grouped by file in a virtualized list, with ±3 lines of
-//! context for the selected match. Replace All rewrites the files that are
-//! open in editors (one undoable edit each). Writing files that are not open
-//! arrives with the real project service in Stage 4; until then they are
-//! skipped and the notification says so.
+//! context for the selected match.
+//!
+//! Stage 7: the search covers a scope — the project, a directory, the open
+//! files or a named scope from `[search.scopes]` — narrowed by a file mask
+//! (`*.rs, !target/**`). Replace All substitutes regex groups (`$1`),
+//! rewrites open files in their editors (one undoable edit each) and the
+//! other files on disk, and records the whole operation so
+//! `ferro::UndoReplaceInFiles` reverts it at once.
 
-use std::{ops::Range, path::PathBuf, time::Duration};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
-use ferro_services::{Services, TextMatch, TextPos, TextQuery};
+use ferro_index::Replacer;
+use ferro_services::{SearchScope, Services, TextMatch, TextPos, TextQuery};
 use ferro_ui::{FerroIcon, tr, tr_args};
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable, Global,
@@ -30,7 +39,10 @@ use gpui_kit::{
     px, uniform_list,
 };
 
-use crate::{requests::OpenLocation, workspace::Workspace};
+use crate::{
+    app_state::AppState, editor::providers::same_path, requests::OpenLocation,
+    search::ReplacedFile, workspace::Workspace,
+};
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
 /// Matching lines fetched per search.
@@ -138,6 +150,18 @@ pub fn replace_ranges(text: &str, ranges: &[Range<usize>], replacement: &str) ->
     out
 }
 
+/// Which files Find in Files searches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScopeChoice {
+    Project,
+    /// The directory typed in the directory field (relative to the root).
+    Directory,
+    /// The files open in editors.
+    OpenFiles,
+    /// A scope from `[search.scopes]`, by name.
+    Named(String),
+}
+
 /// One row of the result list.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Row {
@@ -204,6 +228,11 @@ pub struct FindInFiles {
     query: Entity<InputState>,
     replacement: Entity<InputState>,
     filter: Entity<InputState>,
+    directory: Entity<InputState>,
+    scope: ScopeChoice,
+    /// `[search.scopes]`: name and file mask.
+    named_scopes: Vec<(String, String)>,
+    root: PathBuf,
     replace_mode: bool,
     case_sensitive: bool,
     whole_word: bool,
@@ -237,8 +266,33 @@ impl FindInFiles {
         let replacement =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("search-fif-replacement")));
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder(tr("search-fif-filter")));
+        let root = workspace
+            .services
+            .project
+            .roots()
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        // The directory scope starts at the active file's folder.
+        let start_dir = workspace
+            .active_editor_entity()
+            .and_then(|e| e.read(cx).path().parent().map(Path::to_path_buf))
+            .and_then(|dir| dir.strip_prefix(&root).ok().map(Path::to_path_buf))
+            .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        let directory = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(tr("search-fif-directory"))
+                .default_value(start_dir)
+        });
+        let named_scopes = AppState::settings(cx)
+            .search
+            .scopes
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         let mut subscriptions = Vec::new();
-        for input in [&query, &filter] {
+        for input in [&query, &filter, &directory] {
             subscriptions.push(cx.subscribe_in(
                 input,
                 window,
@@ -264,6 +318,10 @@ impl FindInFiles {
             query,
             replacement,
             filter,
+            directory,
+            scope: ScopeChoice::Project,
+            named_scopes,
+            root,
             replace_mode,
             case_sensitive: false,
             whole_word: false,
@@ -345,13 +403,71 @@ impl FindInFiles {
 
     fn text_query(&self, cx: &App) -> TextQuery {
         let filter = self.filter.read(cx).value().trim().to_string();
+        let scope = match &self.scope {
+            ScopeChoice::Project => SearchScope::Project,
+            ScopeChoice::Directory => {
+                let dir = self.directory.read(cx).value().trim().replace('\\', "/");
+                let dir = dir.trim_matches('/');
+                if dir.is_empty() {
+                    SearchScope::Project
+                } else {
+                    SearchScope::Directory(self.root.join(dir))
+                }
+            }
+            ScopeChoice::OpenFiles => SearchScope::Files(
+                self.workspace
+                    .upgrade()
+                    .map(|ws| {
+                        ws.read(cx)
+                            .editors
+                            .iter()
+                            .map(|e| e.read(cx).path().to_path_buf())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            ),
+            ScopeChoice::Named(name) => self
+                .named_scopes
+                .iter()
+                .find(|(n, _)| n == name)
+                .map_or(SearchScope::Project, |(_, mask)| {
+                    SearchScope::Mask(mask.clone())
+                }),
+        };
         TextQuery {
             text: self.query.read(cx).value().to_string(),
             case_sensitive: self.case_sensitive,
             whole_word: self.whole_word,
             regex: self.regex,
             path_filter: (!filter.is_empty()).then_some(filter),
+            scope,
         }
+    }
+
+    pub fn scope(&self) -> &ScopeChoice {
+        &self.scope
+    }
+
+    /// Search another scope.
+    pub fn set_scope(&mut self, scope: ScopeChoice, window: &mut Window, cx: &mut Context<Self>) {
+        self.scope = scope;
+        self.schedule_search(window, cx);
+    }
+
+    pub fn set_directory(&mut self, dir: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.directory
+            .update(cx, |input, cx| input.set_value(dir.to_string(), window, cx));
+        self.schedule_search(window, cx);
+    }
+
+    /// The replacer for the current query and replacement text, if the
+    /// query is valid.
+    fn replacer(&self, cx: &App) -> Option<Replacer> {
+        let query = self.text_query(cx);
+        if query.text.is_empty() {
+            return None;
+        }
+        Replacer::new(&query, &self.replacement.read(cx).value()).ok()
     }
 
     /// Search after the debounce; a newer change restarts the wait.
@@ -490,8 +606,11 @@ impl FindInFiles {
             .update(cx, |ws, cx| ws.open_location(&location, window, cx));
     }
 
-    /// Replace every match in the files open in editors. Returns
-    /// (occurrences replaced, files changed, files skipped).
+    /// Replace every match: files open in editors are changed there (one
+    /// undoable edit each), the others on disk in the background. Returns
+    /// (occurrences replaced in open files, open files changed, files being
+    /// rewritten on disk). The whole operation is recorded for
+    /// `ferro::UndoReplaceInFiles`.
     pub fn replace_all(
         &mut self,
         window: &mut Window,
@@ -499,54 +618,116 @@ impl FindInFiles {
     ) -> (usize, usize, usize) {
         let query = self.text_query(cx);
         let replacement = self.replacement.read(cx).value().to_string();
+        let replacer = match Replacer::new(&query, &replacement) {
+            Ok(replacer) => replacer,
+            Err(err) => {
+                let message = tr_args("search-error", &[("error", format!("{err:#}").into())]);
+                window.push_notification(Notification::error(message.to_string()), cx);
+                return (0, 0, 0);
+            }
+        };
         let Some(workspace) = self.workspace.upgrade() else {
             return (0, 0, 0);
         };
+        let workspace_id = workspace.entity_id();
         let mut paths: Vec<PathBuf> = self.results.iter().map(|m| m.path.clone()).collect();
         paths.dedup();
-        let (mut count, mut files, mut skipped) = (0, 0, 0);
+        let (mut count, mut files) = (0, 0);
+        let mut changed: Vec<ReplacedFile> = Vec::new();
+        let mut closed: Vec<PathBuf> = Vec::new();
         for path in paths {
             let editor = workspace
                 .read(cx)
                 .editors
                 .iter()
-                .find(|e| e.read(cx).path() == path)
+                .find(|e| same_path(e.read(cx).path(), &path) && e.read(cx).is_loaded())
                 .cloned();
             let Some((editor, text)) = editor.and_then(|e| {
                 let text = e.read(cx).text(cx)?;
                 Some((e, text))
             }) else {
-                skipped += 1;
+                closed.push(path);
                 continue;
             };
-            let ranges = find_ranges(&text, &query.text, query.case_sensitive, query.whole_word);
-            if ranges.is_empty() {
+            let (new_text, n) = replacer.apply(&text);
+            if n == 0 {
                 continue;
             }
-            let new_text = replace_ranges(&text, &ranges, &replacement);
-            editor.update(cx, |e, cx| e.replace_text(new_text, window, cx));
-            count += ranges.len();
+            editor.update(cx, |e, cx| e.replace_text(new_text.clone(), window, cx));
+            changed.push(ReplacedFile {
+                path,
+                before: text,
+                after: new_text,
+            });
+            count += n;
             files += 1;
         }
-        let mut message = if count > 0 {
-            tr_args(
-                "search-fif-replaced",
-                &[("count", count.into()), ("files", files.into())],
-            )
-            .to_string()
-        } else {
-            tr("search-fif-nothing-replaced").to_string()
-        };
-        if skipped > 0 {
-            message.push(' ');
-            message.push_str(&tr_args(
-                "search-fif-skipped",
-                &[("skipped", skipped.into())],
-            ));
-        }
-        window.push_notification(Notification::info(message), cx);
-        self.schedule_search(window, cx);
-        (count, files, skipped)
+        let pending = closed.len();
+        let project = self.services.project.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let (mut disk_count, mut disk_files, mut skipped) = (0usize, 0usize, 0usize);
+            for path in closed {
+                let result = async {
+                    let bytes = project.read_bytes(&path).await?;
+                    // Files in other encodings are left alone rather than
+                    // re-encoded.
+                    let text =
+                        String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("not UTF-8"))?;
+                    let (new_text, n) = replacer.apply(&text);
+                    if n > 0 {
+                        project
+                            .write_file(&path, new_text.clone().into_bytes())
+                            .await?;
+                    }
+                    anyhow::Ok((text, new_text, n))
+                }
+                .await;
+                match result {
+                    Ok((_, _, 0)) => {}
+                    Ok((before, after, n)) => {
+                        disk_count += n;
+                        disk_files += 1;
+                        changed.push(ReplacedFile {
+                            path,
+                            before,
+                            after,
+                        });
+                    }
+                    Err(err) => {
+                        tracing::warn!("replace in {} failed: {err:#}", path.display());
+                        skipped += 1;
+                    }
+                }
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                let (count, files) = (count + disk_count, files + disk_files);
+                crate::search::record_replace(workspace_id, changed, cx);
+                let mut message = if count > 0 {
+                    tr_args(
+                        "search-fif-replaced",
+                        &[("count", count.into()), ("files", files.into())],
+                    )
+                    .to_string()
+                } else {
+                    tr("search-fif-nothing-replaced").to_string()
+                };
+                if skipped > 0 {
+                    message.push(' ');
+                    message.push_str(&tr_args(
+                        "search-fif-skipped",
+                        &[("skipped", skipped.into())],
+                    ));
+                }
+                if count > 0 {
+                    message.push(' ');
+                    message.push_str(&tr("search-fif-undo-hint"));
+                }
+                window.push_notification(Notification::info(message), cx);
+                this.schedule_search(window, cx);
+            });
+        })
+        .detach();
+        (count, files, pending)
     }
 
     // -----------------------------------------------------------------------
@@ -563,9 +744,11 @@ impl FindInFiles {
             theme.success,
             theme.danger,
         );
-        let replacement = self
-            .replace_mode
-            .then(|| self.replacement.read(cx).value().to_string());
+        let replacer = if self.replace_mode {
+            self.replacer(cx)
+        } else {
+            None
+        };
         let mark = HighlightStyle {
             background_color: Some(accent.opacity(0.3)),
             ..Default::default()
@@ -624,11 +807,11 @@ impl FindInFiles {
                         .collect();
                     let label: SharedString =
                         format!("{}:{} {}", m.relative, m.line + 1, trimmed).into();
-                    let line_element: AnyElement = match &replacement {
+                    let line_element: AnyElement = match &replacer {
                         // Before → after: the match struck through, then the
                         // replacement in the success color.
-                        Some(new) => {
-                            let after = replace_ranges(&shown, &ranges, new);
+                        Some(replacer) => {
+                            let after = replacer.preview_line(&shown, &ranges);
                             h_flex()
                                 .gap_2()
                                 .min_w_0()
@@ -680,6 +863,52 @@ impl FindInFiles {
                 }
             })
             .collect()
+    }
+
+    /// Scope buttons, and the directory field for the directory scope.
+    fn render_scopes(&self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let mut choices: Vec<(SharedString, ScopeChoice)> = vec![
+            (tr("search-scope-project"), ScopeChoice::Project),
+            (tr("search-scope-directory"), ScopeChoice::Directory),
+            (tr("search-scope-open-files"), ScopeChoice::OpenFiles),
+        ];
+        choices.extend(self.named_scopes.iter().map(|(name, _)| {
+            (
+                SharedString::from(name.clone()),
+                ScopeChoice::Named(name.clone()),
+            )
+        }));
+        let mut row = h_flex()
+            .pl(px(28.))
+            .gap_1()
+            .flex_wrap()
+            .text_xs()
+            .child(div().text_color(muted).child(tr("search-scope")));
+        for (ix, (label, choice)) in choices.into_iter().enumerate() {
+            let selected = self.scope == choice;
+            row = row.child(
+                Button::new(("fif-scope", ix))
+                    .ghost()
+                    .xsmall()
+                    .label(label)
+                    .selected(selected)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.set_scope(choice.clone(), window, cx)
+                    })),
+            );
+        }
+        if self.scope == ScopeChoice::Directory {
+            row = row.child(
+                div().w(px(260.)).child(
+                    Input::new(&self.directory)
+                        .small()
+                        .aria_label(tr("search-fif-directory"))
+                        .prefix(Icon::from(FerroIcon::Folder).small().text_color(muted)),
+                ),
+            );
+        }
+        row.into_any_element()
     }
 
     fn render_preview(&self, cx: &App) -> AnyElement {
@@ -948,6 +1177,7 @@ impl Render for FindInFiles {
                         ),
                 )
             })
+            .child(self.render_scopes(cx))
             .child(
                 div().pl(px(28.)).child(
                     Input::new(&self.filter)
