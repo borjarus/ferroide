@@ -35,3 +35,24 @@ editor-diff-editor = Editor
 status-line-separator-menu = Line separator for this file
 status-encoding-reopen = Reopen with Encoding
 status-encoding-save = Save with Encoding
+
+lsp-nothing-found = Nothing found for { $name }
+lsp-format-nothing = The file is already formatted
+lsp-format-unavailable = No language server formats this file
+lsp-imports-nothing = Imports are already optimized
+lsp-edits-applied = { $count ->
+    [one] 1 change
+   *[other] { $count } changes
+} in { $files ->
+    [one] 1 file
+   *[other] { $files } files
+}
+lsp-edits-failed = Could not change { $file }: { $error }
+lsp-install-none = The language servers of { $language } are installed, or FerroIDE cannot install them: { $hint }
+lsp-install-started = Installing { $server }…
+lsp-install-done = { $server } is installed
+lsp-install-failed = Installing { $server } failed: { $error }
+lsp-restarted = Language servers restart on the next request
+lsp-power-save-on = Power save mode: inlay hints, semantic highlighting and code lens are off
+lsp-power-save-off = Power save mode is off
+lsp-no-file = Open a file first

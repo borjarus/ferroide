@@ -6,9 +6,10 @@ use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
 
 use ferro_db::{Location, NavLocation};
 use ferro_services::{
-    Branch, ProjectEvent, RunConfiguration, RunEvent, RunState, Services, TaskProgress, TextPos,
+    Branch, LanguageEvent, ProjectEvent, RunConfiguration, RunEvent, RunState, Services,
+    TaskProgress, TextPos,
 };
-use ferro_ui::tr;
+use ferro_ui::{tr, tr_args};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable, Global,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, Styled as _,
@@ -30,7 +31,9 @@ use crate::{
     app_state::AppState,
     editor::{EDITOR_PANEL_NAME, EditorCommand, EditorEvent, EditorPanel, EditorTabState},
     quick_open::QuickOpenMode,
-    requests::{OpenDiff, OpenLocation, OpenMerge, RevealInProject},
+    requests::{
+        ApplyWorkspaceEdit, OpenDiff, OpenLocation, OpenMerge, RevealInProject, ShowLocations,
+    },
     settings_window::SettingsPage,
     tool_window::{ToolWindowKind, ToolWindowPanel},
 };
@@ -156,6 +159,9 @@ pub struct Workspace {
     pub(crate) selected_run: usize,
     pub(crate) run_state: RunState,
     save_task: Option<Task<()>>,
+    problems_refresh: Task<()>,
+    /// The last list of locations shown (tests read it).
+    pub(crate) locations: Option<gpui_kit::WeakEntity<crate::locations::LocationsView>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -211,6 +217,8 @@ impl Workspace {
             selected_run: 0,
             run_state: RunState::Idle,
             save_task: None,
+            problems_refresh: Task::ready(()),
+            locations: None,
             _subscriptions: subscriptions,
         };
 
@@ -233,27 +241,11 @@ impl Workspace {
         let events = self.services.project.subscribe();
         cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
-                let alive = this.update(cx, |this, cx| match &event {
-                    ProjectEvent::RootsChanged => {
-                        let roots = this.services.project.roots();
-                        cx.global_mut::<AppState>()
-                            .project_settings
-                            .retain(|(root, _)| roots.contains(root));
-                        for root in roots {
-                            AppState::load_project_settings(&root, cx);
-                        }
-                        this.schedule_save(cx);
-                    }
-                    ProjectEvent::Added(path)
-                    | ProjectEvent::Changed(path)
-                    | ProjectEvent::Removed(path) => {
-                        let root = this.services.project.roots().into_iter().find(|root| {
-                            *path == ferro_settings::Paths::project_settings_file(root)
-                        });
-                        if let Some(root) = root {
-                            AppState::load_project_settings(&root, cx);
-                        }
-                    }
+                let alive = this.update(cx, |this, cx| {
+                    this.services
+                        .language
+                        .files_changed(std::slice::from_ref(&event));
+                    this.on_project_event(&event, cx)
                 });
                 if alive.is_err() {
                     break;
@@ -261,6 +253,34 @@ impl Workspace {
             }
         })
         .detach();
+    }
+
+    fn on_project_event(&mut self, event: &ProjectEvent, cx: &mut Context<Self>) {
+        match event {
+            ProjectEvent::RootsChanged => {
+                let roots = self.services.project.roots();
+                cx.global_mut::<AppState>()
+                    .project_settings
+                    .retain(|(root, _)| roots.contains(root));
+                for root in roots {
+                    AppState::load_project_settings(&root, cx);
+                }
+                self.schedule_save(cx);
+            }
+            ProjectEvent::Added(path)
+            | ProjectEvent::Changed(path)
+            | ProjectEvent::Removed(path) => {
+                let root = self
+                    .services
+                    .project
+                    .roots()
+                    .into_iter()
+                    .find(|root| *path == ferro_settings::Paths::project_settings_file(root));
+                if let Some(root) = root {
+                    AppState::load_project_settings(&root, cx);
+                }
+            }
+        }
     }
 
     /// Back / Forward and recent files as the project left them.
@@ -1376,6 +1396,19 @@ impl Workspace {
         })
         .detach();
 
+        // Language servers: pushed diagnostics, refresh requests, state.
+        if let Some(events) = self.services.language.subscribe() {
+            cx.spawn(async move |this, cx| {
+                while let Ok(event) = events.recv().await {
+                    let alive = this.update(cx, |this, cx| this.on_language_event(event, cx));
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
+
         // Memory indicator: real resident memory of this process.
         cx.spawn(async move |this, cx| {
             loop {
@@ -1478,6 +1511,207 @@ impl Workspace {
             cx,
         ) {
             tree.update(cx, |tree, cx| tree.reveal(path, cx));
+        }
+    }
+
+    fn on_language_event(&mut self, event: LanguageEvent, cx: &mut Context<Self>) {
+        match event {
+            LanguageEvent::DiagnosticsChanged(path) => {
+                for editor in self.editors.clone() {
+                    if crate::editor::providers::same_path(editor.read(cx).path(), &path) {
+                        editor.update(cx, |e, cx| e.refresh_diagnostics(cx));
+                    }
+                }
+                self.schedule_problems_refresh(cx);
+            }
+            LanguageEvent::RefreshRequested => {
+                for editor in self.editors.clone() {
+                    editor.update(cx, |e, cx| e.refresh_analysis(cx));
+                }
+            }
+            LanguageEvent::ServersChanged => cx.notify(),
+        }
+    }
+
+    /// Refresh the Problems tool window (if it exists) after a burst of
+    /// diagnostics settles.
+    fn schedule_problems_refresh(&mut self, cx: &mut Context<Self>) {
+        let Some(panel) = self.tool_windows.get(&ToolWindowKind::Problems).cloned() else {
+            return;
+        };
+        self.problems_refresh = cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(300))
+                .await;
+            panel.update(cx, |panel, cx| {
+                if let Some(view) = panel
+                    .body()
+                    .downcast::<crate::panels::problems::ProblemsView>()
+                {
+                    view.update(cx, |view, cx| view.refresh(cx));
+                }
+            });
+        });
+    }
+
+    /// Show code locations: one opens, more go to a list.
+    pub fn show_locations(
+        &mut self,
+        request: &ShowLocations,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.locations = crate::locations::open_or_show(
+            self,
+            request.title.clone(),
+            request.items.clone(),
+            window,
+            cx,
+        )
+        .map(|view| view.downgrade());
+    }
+
+    /// Apply edits to files: in their editors when open (undoable),
+    /// otherwise on disk. Returns (edits, files) applied.
+    pub fn apply_workspace_edit(
+        &mut self,
+        files: &[(PathBuf, Vec<ferro_services::TextEdit>)],
+        notify: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (usize, usize) {
+        let mut applied = (0, 0);
+        for (path, edits) in files {
+            if edits.is_empty() {
+                continue;
+            }
+            let editor = self
+                .editors
+                .iter()
+                .find(|e| crate::editor::providers::same_path(e.read(cx).path(), path))
+                .cloned();
+            match editor {
+                Some(editor) if editor.read(cx).is_loaded() => {
+                    editor.update(cx, |e, cx| e.apply_edits(edits, window, cx));
+                }
+                _ => {
+                    let project = self.services.project.clone();
+                    let (path, edits) = (path.clone(), edits.clone());
+                    cx.spawn_in(window, async move |_, cx| {
+                        let result = async {
+                            let text = project.read_file(&path).await?;
+                            let new = crate::dialogs::rename::apply_edits(&text, &edits);
+                            project.write_file(&path, new.into_bytes()).await
+                        }
+                        .await;
+                        if let Err(err) = result {
+                            let _ = cx.update(|window, cx| {
+                                let message = tr_args(
+                                    "lsp-edits-failed",
+                                    &[
+                                        ("file", path.display().to_string().into()),
+                                        ("error", format!("{err:#}").into()),
+                                    ],
+                                );
+                                window.push_notification(
+                                    Notification::error(message.to_string()),
+                                    cx,
+                                );
+                            });
+                        }
+                    })
+                    .detach();
+                }
+            }
+            applied.0 += edits.len();
+            applied.1 += 1;
+        }
+        if notify && applied.0 > 0 {
+            let message = tr_args(
+                "lsp-edits-applied",
+                &[("count", applied.0.into()), ("files", applied.1.into())],
+            );
+            window.push_notification(Notification::info(message.to_string()), cx);
+        }
+        applied
+    }
+
+    /// The language-server service of this window, when the project runs
+    /// on servers (a folder from disk).
+    fn lsp_service(&self, cx: &App) -> Option<std::sync::Arc<ferro_lsp::LspLanguageService>> {
+        crate::lsp::service_of(&self.services.language, cx)
+    }
+
+    /// Install the missing language servers of the active file's language.
+    pub fn install_language_server(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.active_editor_entity() else {
+            window.push_notification(Notification::info(tr("lsp-no-file")), cx);
+            return;
+        };
+        let path = editor.read(cx).path().to_path_buf();
+        let language = editor.read(cx).language_name().to_string();
+        let Some(service) = self.lsp_service(cx) else {
+            return;
+        };
+        let dir = crate::lsp::install_dir(cx);
+        let mut hint = String::new();
+        // Not found, or found but failing (a rustup proxy without the
+        // component, a broken install).
+        let failing: Vec<String> = service.problems().into_iter().map(|(id, _)| id).collect();
+        let missing: Vec<_> = service
+            .servers_of(&path)
+            .into_iter()
+            .filter(|(server, found)| !found || failing.contains(&server.id))
+            .map(|(server, _)| server)
+            .filter(|server| match ferro_lsp::install::plan(server, &dir) {
+                ferro_lsp::install::InstallPlan::Steps(_) => true,
+                ferro_lsp::install::InstallPlan::Manual(manual) => {
+                    hint = manual;
+                    false
+                }
+            })
+            .collect();
+        if missing.is_empty() {
+            let message = tr_args(
+                "lsp-install-none",
+                &[("language", language.into()), ("hint", hint.into())],
+            );
+            window.push_notification(Notification::info(message.to_string()), cx);
+            return;
+        }
+        for server in missing {
+            let started = tr_args(
+                "lsp-install-started",
+                &[("server", server.id.clone().into())],
+            );
+            window.push_notification(Notification::info(started.to_string()), cx);
+            let service = service.clone();
+            let task = cx.background_spawn(async move {
+                let result = service.install(&server);
+                (server.id, result)
+            });
+            cx.spawn_in(window, async move |this, cx| {
+                let (id, result) = task.await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let message = match result {
+                        Ok(()) => Notification::success(
+                            tr_args("lsp-install-done", &[("server", id.into())]).to_string(),
+                        ),
+                        Err(err) => Notification::error(
+                            tr_args(
+                                "lsp-install-failed",
+                                &[("server", id.into()), ("error", format!("{err:#}").into())],
+                            )
+                            .to_string(),
+                        ),
+                    };
+                    window.push_notification(message, cx);
+                    for editor in this.editors.clone() {
+                        editor.update(cx, |e, cx| e.refresh_analysis(cx));
+                    }
+                });
+            })
+            .detach();
         }
     }
 
@@ -1685,6 +1919,66 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &NextProblem, window, cx| {
                 this.editor_command(EditorCommand::NextProblem, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &GoToDefinition, window, cx| {
+                this.editor_command(EditorCommand::GoToDefinition, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &GoToDeclaration, window, cx| {
+                this.editor_command(EditorCommand::GoToDeclaration, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &GoToTypeDefinition, window, cx| {
+                this.editor_command(EditorCommand::GoToTypeDefinition, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &GoToImplementation, window, cx| {
+                this.editor_command(EditorCommand::GoToImplementation, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &FindUsages, window, cx| {
+                this.editor_command(EditorCommand::FindUsages, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &CallHierarchy, window, cx| {
+                this.editor_command(EditorCommand::CallHierarchy, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &TypeHierarchy, window, cx| {
+                this.editor_command(EditorCommand::TypeHierarchy, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &FormatDocument, window, cx| {
+                this.editor_command(EditorCommand::FormatDocument, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &OrganizeImports, window, cx| {
+                this.editor_command(EditorCommand::OrganizeImports, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &InstallLanguageServer, window, cx| {
+                this.install_language_server(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &RestartLanguageServers, window, cx| {
+                if let Some(service) = this.lsp_service(cx) {
+                    service.stop_all();
+                }
+                this.notify_info("lsp-restarted", window, cx);
+                for editor in this.editors.clone() {
+                    editor.update(cx, |e, cx| e.refresh_analysis(cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &TogglePowerSave, window, cx| {
+                let on = !AppState::settings(cx).lsp.power_save;
+                AppState::update_settings(cx, |s| s.lsp.power_save = on);
+                let key = if on {
+                    "lsp-power-save-on"
+                } else {
+                    "lsp-power-save-off"
+                };
+                this.notify_info(key, window, cx);
+                for editor in this.editors.clone() {
+                    editor.update(cx, |e, cx| e.refresh_analysis(cx));
+                }
+            }))
+            .on_action(cx.listener(|this, request: &ShowLocations, window, cx| {
+                this.show_locations(request, window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, request: &ApplyWorkspaceEdit, window, cx| {
+                    this.apply_workspace_edit(&request.files, true, window, cx);
+                }),
+            )
             .on_action(cx.listener(|this, _: &PreviousProblem, window, cx| {
                 this.editor_command(EditorCommand::PreviousProblem, window, cx)
             }))

@@ -8,7 +8,9 @@
 
 use std::path::PathBuf;
 
-use ferro_services::TextPos;
+use ferro_services::{TextEdit, TextPos};
+
+use crate::locations::LocationItem;
 use gpui_kit::Action;
 
 /// Open a file in the editor, optionally at a position.
@@ -76,4 +78,21 @@ pub struct OpenMerge {
 #[action(namespace = ferro, no_json)]
 pub struct RevealInProject {
     pub path: PathBuf,
+}
+
+/// Show a list of code locations (Find Usages, implementations, call and
+/// type hierarchies); a single location opens directly.
+#[derive(Debug, Clone, PartialEq, Action)]
+#[action(namespace = ferro, no_json)]
+pub struct ShowLocations {
+    pub title: String,
+    pub items: Vec<LocationItem>,
+}
+
+/// Apply edits to files: open ones in their editors (undoable), the others
+/// on disk (quick fixes and refactorings that touch other files).
+#[derive(Debug, Clone, PartialEq, Action)]
+#[action(namespace = ferro, no_json)]
+pub struct ApplyWorkspaceEdit {
+    pub files: Vec<(PathBuf, Vec<TextEdit>)>,
 }

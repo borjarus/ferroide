@@ -54,3 +54,17 @@ search-fif-open-hint = Enter or double-click opens the match
 search-fif-replaced = Replaced { $count } occurrences in { $files } open files.
 search-fif-skipped = Files not open in an editor were skipped ({ $skipped }): writing files arrives with the real project service (Stage 4).
 search-fif-nothing-replaced = Nothing replaced: open a file containing matches first.
+
+locations-summary = { $count ->
+    [one] 1 result
+   *[other] { $count } results
+} in { $files ->
+    [one] 1 file
+   *[other] { $files } files
+}
+locations-open-hint = Enter opens · Esc closes
+locations-usages = Usages of { $name }
+locations-definitions = Definitions of { $name }
+locations-implementations = Implementations of { $name }
+locations-callers = Callers of { $name }
+locations-type-hierarchy = Type hierarchy of { $name }

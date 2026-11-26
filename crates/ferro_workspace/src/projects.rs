@@ -1,13 +1,14 @@
 //! Real projects (plan §8, Stage 4): opening a folder from disk, reopening
 //! recent projects, adding root folders, and trusted projects.
 //!
-//! A project opened from disk runs on `FsProjectService` and
-//! `FsSearchService`; the other services stay mocks until their stages
-//! (LSP: 6, run: 8, VCS: 9, debugger: 10).
+//! A project opened from disk runs on `FsProjectService`,
+//! `FsSearchService` and language servers (`LspLanguageService`, with the
+//! tree-sitter service as its fallback); the other services stay mocks
+//! until their stages (run: 8, VCS: 9, debugger: 10).
 //!
 //! **Trust.** A folder that was never trusted opens in safe mode: the
-//! workspace shows a bar offering to trust it, and run configurations are
-//! refused until it is. Trust is stored per folder in the state database and
+//! workspace shows a bar offering to trust it, and run configurations and
+//! language servers are refused until it is. Trust is stored per folder in the state database and
 //! covers its subfolders.
 
 use std::{
@@ -18,6 +19,7 @@ use std::{
 
 use anyhow::Result;
 use ferro_languages::SyntaxLanguageService;
+use ferro_lsp::{LspLanguageService, LspOptions, ProcessLauncher};
 use ferro_project::{FsProjectService, FsSearchService, ProjectOptions};
 use ferro_services::{Services, mock::MockConfig};
 use ferro_ui::{FerroIcon, tr, tr_args};
@@ -49,20 +51,54 @@ impl Global for Untrusted {}
 pub(crate) struct WelcomeWindows(pub Vec<AnyWindowHandle>);
 impl Global for WelcomeWindows {}
 
-/// Services for a project on disk.
-pub fn project_services(roots: Vec<PathBuf>) -> Result<Services> {
+/// Services for a project on disk. Language servers start only once the
+/// project is trusted ([`LanguageService::set_trusted`]).
+///
+/// [`LanguageService::set_trusted`]: ferro_services::LanguageService::set_trusted
+pub fn project_services(
+    roots: Vec<PathBuf>,
+    lsp: LspOptions,
+) -> Result<(Services, Arc<LspLanguageService>)> {
+    let launcher = Arc::new(ProcessLauncher {
+        install_dir: lsp.install_dir.clone(),
+    });
+    project_services_with(roots, lsp, launcher)
+}
+
+/// [`project_services`] with servers started by `launcher` (tests run
+/// servers in-process).
+pub fn project_services_with(
+    roots: Vec<PathBuf>,
+    lsp: LspOptions,
+    launcher: Arc<dyn ferro_lsp::Launcher>,
+) -> Result<(Services, Arc<LspLanguageService>)> {
     let project = FsProjectService::open_with(roots, ProjectOptions::default())?;
     let mut services = Services::mock(MockConfig::default());
     services.search = Arc::new(FsSearchService::new(project.clone()));
-    // Until language servers (Stage 6): tree-sitter structure, ▶ icons,
-    // syntax errors, completion and a tags-based symbol index.
+    // Without a server: tree-sitter structure, ▶ icons, syntax errors,
+    // completion and a tags-based symbol index.
     let index = project.index().clone();
-    services.language = Arc::new(SyntaxLanguageService::new(
+    let fallback = SyntaxLanguageService::new(
         crate::languages::registry(),
         Arc::new(move || index.snapshot().iter().map(|f| f.path.clone()).collect()),
+    );
+    let project = Arc::new(project);
+    let roots_of = project.clone();
+    let language = Arc::new(LspLanguageService::new(
+        crate::languages::registry(),
+        fallback,
+        Arc::new(move || ferro_services::ProjectService::roots(&*roots_of)),
+        launcher,
+        lsp,
+        false,
     ));
-    services.project = Arc::new(project);
-    Ok(services)
+    services.language = language.clone();
+    services.status = Arc::new(crate::lsp::LspStatus {
+        inner: services.status.clone(),
+        language: language.clone(),
+    });
+    services.project = project;
+    Ok((services, language))
 }
 
 /// Open a project from disk in a new window and remember it.
@@ -70,7 +106,8 @@ pub fn open_project(
     roots: Vec<PathBuf>,
     cx: &mut App,
 ) -> Result<(AnyWindowHandle, Entity<Workspace>)> {
-    let services = project_services(roots)?;
+    let (services, language) = project_services(roots, crate::lsp::options(cx))?;
+    crate::lsp::register(&language, cx);
     let roots = services.project.roots();
     let db = AppState::global(cx).db.clone();
     if let Err(err) = db.record_project_opened(&roots, &services.project.name()) {
@@ -84,6 +121,7 @@ pub fn open_project(
         untrusted.roots.insert(roots[0].clone());
         untrusted.dismissed.remove(&roots[0]);
     }
+    services.language.set_trusted(trusted);
     let opened = crate::open_workspace(services, cx)?;
     close_welcome_windows(cx);
     Ok(opened)
@@ -164,6 +202,7 @@ pub fn prompt_add_folder(workspace: &mut Workspace, _: &mut Window, cx: &mut Con
         prompt: Some(tr("project-add-folder-prompt")),
     });
     let project = workspace.services.project.clone();
+    let language = workspace.services.language.clone();
     let key = crate::workspace::project_key(&workspace.services);
     cx.spawn(async move |_, cx| {
         let Ok(Ok(Some(paths))) = picked.await else {
@@ -183,6 +222,7 @@ pub fn prompt_add_folder(workspace: &mut Workspace, _: &mut Window, cx: &mut Con
                     let untrusted = cx.default_global::<Untrusted>();
                     untrusted.roots.insert(PathBuf::from(&key));
                     untrusted.dismissed.remove(&PathBuf::from(&key));
+                    language.set_trusted(false);
                 }
             }
             cx.refresh_windows();
@@ -214,6 +254,7 @@ pub fn trust(services: &Services, cx: &mut App) {
         untrusted.roots.remove(first);
         untrusted.dismissed.remove(first);
     }
+    services.language.set_trusted(true);
     cx.refresh_windows();
 }
 

@@ -158,6 +158,25 @@ pub const ACTIONS: &[ActionDescriptor] = &[
         "action-previous-problem",
         Navigate,
     ),
+    a("ferro::GoToDefinition", "action-go-to-definition", Navigate),
+    a(
+        "ferro::GoToDeclaration",
+        "action-go-to-declaration",
+        Navigate,
+    ),
+    a(
+        "ferro::GoToTypeDefinition",
+        "action-go-to-type-definition",
+        Navigate,
+    ),
+    a(
+        "ferro::GoToImplementation",
+        "action-go-to-implementation",
+        Navigate,
+    ),
+    a("ferro::FindUsages", "action-find-usages", Navigate),
+    a("ferro::CallHierarchy", "action-call-hierarchy", Navigate),
+    a("ferro::TypeHierarchy", "action-type-hierarchy", Navigate),
     // Code
     a(
         "ferro::TriggerCompletion",
@@ -172,6 +191,19 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ),
     a("ferro::ParameterInfo", "action-parameter-info", Code),
     a("ferro::RenameSymbol", "action-rename-symbol", Code),
+    a("ferro::FormatDocument", "action-format-document", Code),
+    a("ferro::OrganizeImports", "action-organize-imports", Code),
+    a(
+        "ferro::InstallLanguageServer",
+        "action-install-language-server",
+        Code,
+    ),
+    a(
+        "ferro::RestartLanguageServers",
+        "action-restart-language-servers",
+        Code,
+    ),
+    a("ferro::TogglePowerSave", "action-toggle-power-save", Code),
     a("ferro::ToggleBreakpoint", "action-toggle-breakpoint", Code),
     // Tool windows
     a("ferro::ToggleProject", "action-toggle-project", ToolWindows),

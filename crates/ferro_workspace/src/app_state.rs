@@ -155,6 +155,7 @@ impl AppState {
         {
             tracing::warn!("could not save settings: {err:#}");
         }
+        crate::lsp::sync_options(cx);
         cx.refresh_windows();
     }
 
@@ -312,6 +313,9 @@ pub fn reload_settings_from_disk(cx: &mut App) {
         reinstall_keymap(cx);
     } else {
         menus::install(cx);
+    }
+    if loaded.lsp != old.lsp {
+        crate::lsp::sync_options(cx);
     }
     cx.refresh_windows();
 }

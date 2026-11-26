@@ -25,6 +25,7 @@ ferro_project = { path = "crates/ferro_project" }
 ferro_db = { path = "crates/ferro_db" }
 ferro_syntax = { path = "crates/ferro_syntax" }
 ferro_languages = { path = "crates/ferro_languages" }
+ferro_lsp = { path = "crates/ferro_lsp" }
 
 # Verified in November 2026 (see docs/adr/ADR-001-gui-framework.md):
 gpui-kit = "0.9"

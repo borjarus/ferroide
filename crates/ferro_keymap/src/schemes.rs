@@ -101,6 +101,13 @@ pub(crate) const VSCODE: &[Binding] = &[
     e("ctrl-alt-down", "ferro::AddCursorBelow"),
     e("shift-alt-right", "ferro::ExpandSelection"),
     e("shift-alt-left", "ferro::ShrinkSelection"),
+    e("f12", "ferro::GoToDefinition"),
+    e("ctrl-f12", "ferro::GoToImplementation"),
+    e("shift-f12", "ferro::FindUsages"),
+    e("shift-alt-f12", "ferro::FindUsages"),
+    e("shift-alt-h", "ferro::CallHierarchy"),
+    e("shift-alt-f", "ferro::FormatDocument"),
+    e("shift-alt-o", "ferro::OrganizeImports"),
 ];
 
 pub(crate) const VSCODE_MAC: MacRule = MacRule::CtrlToCmd {
@@ -190,9 +197,25 @@ pub(crate) const JETBRAINS: &[Binding] = &[
     e("ctrl-w", "ferro::ExpandSelection"),
     e("ctrl-shift-w", "ferro::ShrinkSelection"),
     e("ctrl-alt-i", "ferro::AutoIndentLines"),
+    e("ctrl-b", "ferro::GoToDefinition"),
+    e("ctrl-alt-b", "ferro::GoToImplementation"),
+    e("ctrl-shift-b", "ferro::GoToTypeDefinition"),
+    e("alt-f7", "ferro::FindUsages"),
+    e("ctrl-alt-h", "ferro::CallHierarchy"),
+    e("ctrl-h", "ferro::TypeHierarchy"),
+    e("ctrl-alt-l", "ferro::FormatDocument"),
+    e("ctrl-alt-o", "ferro::OrganizeImports"),
 ];
 
 pub(crate) const JETBRAINS_MAC: MacRule = MacRule::Explicit(&[
+    e("cmd-b", "ferro::GoToDefinition"),
+    e("cmd-alt-b", "ferro::GoToImplementation"),
+    e("ctrl-shift-b", "ferro::GoToTypeDefinition"),
+    e("alt-f7", "ferro::FindUsages"),
+    e("ctrl-alt-h", "ferro::CallHierarchy"),
+    e("ctrl-h", "ferro::TypeHierarchy"),
+    e("cmd-alt-l", "ferro::FormatDocument"),
+    e("ctrl-alt-o", "ferro::OrganizeImports"),
     b("cmd-shift-a", "ferro::FindAction"),
     b("cmd-shift-o", "ferro::QuickOpen"),
     b("cmd-alt-o", "ferro::GoToSymbolInWorkspace"),
@@ -311,6 +334,11 @@ pub(crate) const ZED: &[Binding] = &[
     e("ctrl-alt-down", "ferro::AddCursorBelow"),
     e("shift-alt-right", "ferro::ExpandSelection"),
     e("shift-alt-left", "ferro::ShrinkSelection"),
+    e("f12", "ferro::GoToDefinition"),
+    e("ctrl-f12", "ferro::GoToTypeDefinition"),
+    e("shift-f12", "ferro::GoToImplementation"),
+    e("alt-shift-f12", "ferro::FindUsages"),
+    e("ctrl-shift-i", "ferro::FormatDocument"),
 ];
 
 pub(crate) const ZED_MAC: MacRule = MacRule::CtrlToCmd {
@@ -369,6 +397,8 @@ pub(crate) const SUBLIME: &[Binding] = &[
     e("ctrl-alt-up", "ferro::AddCursorAbove"),
     e("ctrl-alt-down", "ferro::AddCursorBelow"),
     e("ctrl-shift-space", "ferro::ExpandSelection"),
+    e("f12", "ferro::GoToDefinition"),
+    e("shift-f12", "ferro::FindUsages"),
 ];
 
 pub(crate) const SUBLIME_MAC: MacRule = MacRule::CtrlToCmd {
@@ -420,6 +450,7 @@ pub(crate) const EMACS: &[Binding] = &[
     e("alt-;", "ferro::ToggleLineComment"),
     e("ctrl-=", "ferro::ExpandSelection"),
     e("ctrl-alt-\\", "ferro::AutoIndentLines"),
+    e("alt-.", "ferro::GoToDefinition"),
 ];
 
 pub(crate) const EMACS_MAC: MacRule = MacRule::Same;

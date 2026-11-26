@@ -17,6 +17,7 @@
 pub mod document;
 mod editing;
 pub mod model;
+pub mod navigation;
 pub mod providers;
 mod syntax;
 mod view;
@@ -28,8 +29,8 @@ use std::{
 };
 
 use ferro_services::{
-    Breakpoint, DebugEvent, Diagnostic, InlayHint, LineChange, LineChangeKind, ProjectEvent,
-    Runnable, Services, Severity, SignatureHelp, Symbol, TextPos, TextRange,
+    Breakpoint, DebugEvent, Diagnostic, GotoKind, InlayHint, LineChange, LineChangeKind,
+    ProjectEvent, Runnable, Services, Severity, SignatureHelp, Symbol, TextPos, TextRange,
 };
 use ferro_settings::{Autosave, EditorSettings};
 use ferro_text::{Rope, encoding::TextEncoding, line_ending::LineEnding};
@@ -118,6 +119,15 @@ pub enum EditorCommand {
     ExpandSelection,
     ShrinkSelection,
     AutoIndentLines,
+    GoToDefinition,
+    GoToDeclaration,
+    GoToTypeDefinition,
+    GoToImplementation,
+    FindUsages,
+    CallHierarchy,
+    TypeHierarchy,
+    FormatDocument,
+    OrganizeImports,
 }
 
 enum Content {
@@ -164,6 +174,7 @@ pub struct EditorPanel {
     breakpoints: Vec<Breakpoint>,
     gutter: GutterDecorationCollection,
     analysis_task: Task<()>,
+    diagnostics_task: Task<()>,
     /// Open Parameter Info popup.
     signature: Option<SignatureHelp>,
     request_task: Task<()>,
@@ -301,6 +312,7 @@ impl EditorPanel {
                 breakpoints,
                 gutter: GutterDecorationCollection::default(),
                 analysis_task: Task::ready(()),
+                diagnostics_task: Task::ready(()),
                 signature: None,
                 request_task: Task::ready(()),
                 applied: None,
@@ -385,6 +397,9 @@ impl EditorPanel {
             let lsp = state.lsp_mut();
             lsp.completion_provider = Some(providers.clone());
             lsp.hover_provider = Some(providers.clone());
+            lsp.definition_provider = Some(providers.clone());
+            lsp.semantic_tokens_provider = Some(providers.clone());
+            lsp.show_document = Some(providers::show_document_handler());
             lsp.code_action_providers.push(providers);
             state
         });
@@ -438,6 +453,43 @@ impl EditorPanel {
         }
     }
 
+    /// Recompute the analysis soon: a language server asked for a
+    /// refresh, or the servers changed.
+    pub fn refresh_analysis(&mut self, cx: &mut Context<Self>) {
+        self.schedule_analysis(Duration::from_millis(30), cx);
+    }
+
+    /// Fetch only the diagnostics again: a language server published new
+    /// ones. Cheaper than a full analysis, which servers that publish often
+    /// (after every check) would otherwise trigger each time.
+    pub fn refresh_diagnostics(&mut self, cx: &mut Context<Self>) {
+        if self.disk.is_large() {
+            return;
+        }
+        let Some(snapshot) = self.state().map(|s| s.read(cx).text().clone()) else {
+            return;
+        };
+        let (path, language) = (self.path.clone(), self.services.language.clone());
+        self.diagnostics_task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(30))
+                .await;
+            let diagnostics = cx
+                .background_spawn(async move {
+                    language
+                        .diagnostics(&path, &snapshot.to_string())
+                        .await
+                        .unwrap_or_default()
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.analysis.diagnostics = diagnostics;
+                this.show_diagnostics(cx);
+                cx.notify();
+            });
+        });
+    }
+
     /// Recompute diagnostics, outline, hints, runnables and change markers
     /// after `delay`; a newer call replaces (cancels) a pending one.
     fn schedule_analysis(&mut self, delay: Duration, cx: &mut Context<Self>) {
@@ -482,6 +534,16 @@ impl EditorPanel {
 
     fn apply_analysis(&mut self, analysis: Analysis, cx: &mut Context<Self>) {
         self.analysis = analysis;
+        self.diagnostics_task = Task::ready(());
+        if self.state().is_some() {
+            self.show_diagnostics(cx);
+            self.update_gutter(cx);
+        }
+        cx.notify();
+    }
+
+    /// Push the analysis' diagnostics to the editor's underlines.
+    fn show_diagnostics(&mut self, cx: &mut Context<Self>) {
         if let Some(state) = self.state().cloned() {
             let diagnostics = self.analysis.diagnostics.clone();
             state.update(cx, |state, cx| {
@@ -499,9 +561,7 @@ impl EditorPanel {
                 }
                 cx.notify();
             });
-            self.update_gutter(cx);
         }
-        cx.notify();
     }
 
     /// Push the VCS change markers to the editor's gutter strip.
@@ -703,6 +763,15 @@ impl EditorPanel {
                     self.auto_indent_lines(&state, window, cx);
                 }
             }
+            EditorCommand::GoToDefinition => self.goto(GotoKind::Definition, window, cx),
+            EditorCommand::GoToDeclaration => self.goto(GotoKind::Declaration, window, cx),
+            EditorCommand::GoToTypeDefinition => self.goto(GotoKind::TypeDefinition, window, cx),
+            EditorCommand::GoToImplementation => self.goto(GotoKind::Implementation, window, cx),
+            EditorCommand::FindUsages => self.find_usages(window, cx),
+            EditorCommand::CallHierarchy => self.hierarchy(false, window, cx),
+            EditorCommand::TypeHierarchy => self.hierarchy(true, window, cx),
+            EditorCommand::FormatDocument => self.format_document(false, window, cx),
+            EditorCommand::OrganizeImports => self.format_document(true, window, cx),
             _ => self.run_text_command(command, &state, window, cx),
         }
     }
@@ -903,6 +972,9 @@ impl EditorPanel {
                 Ok(stamp) => {
                     this.disk.stamp = Some(stamp);
                     this.disk.mixed_line_endings = false;
+                    this.services
+                        .language
+                        .document_saved(&this.path, &snapshot.to_string());
                     this.saved = snapshot;
                     this.external = None;
                     this.update_dirty(cx);
@@ -1256,5 +1328,12 @@ impl Render for EditorPanel {
             .size_full()
             .bg(cx.theme().background)
             .child(body)
+    }
+}
+
+impl Drop for EditorPanel {
+    fn drop(&mut self) {
+        // `textDocument/didClose`: the server drops its copy.
+        self.services.language.document_closed(&self.path);
     }
 }

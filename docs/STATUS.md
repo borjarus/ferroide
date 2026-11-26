@@ -339,11 +339,114 @@ tree-sitter service on a project from disk).
   editor reparses on a background thread, so typing is not blocked.
 - **Completion** without a language server offers keywords and words of
   the file; rename, hover, signature help, quick fixes and inlay hints
-  return nothing on projects from disk until Stage 6. `--demo` keeps the
-  mock language service.
+  need a language server (Stage 6). `--demo` keeps the mock language
+  service.
 
 ### Open items
 
 - Weak-profile measurement of the reparse budget.
 - More packs (Kotlin, PHP, Swift, Dockerfile, Makefile…) as grammars are
   added; a pack registry to download them (Stage 11).
+
+## Stage 6 — Code intelligence via LSP
+
+A new GUI-free crate, `ferro_lsp`, is the language server client. A project
+opened from disk now runs on `LspLanguageService`: the Language Pack of a
+file names its servers (`[[language_servers]]`), they start on the first
+request for one of their files, and the tree-sitter service of Stage 5
+answers whenever no server can (none installed, untrusted project, crashed
+for good, a language without one). `--demo` keeps the mock, which learned
+Go to Definition and Find Usages.
+
+| Plan item | Delivered |
+|---|---|
+| `ferro_lsp`: JSON-RPC over stdio, queues, cancellation, timeouts | ✔ `rpc`: `Content-Length` framing; a writer thread drains the outgoing queue (a busy server never blocks the caller), a reader thread matches responses; every request has a timeout, and a request future dropped before its answer sends `$/cancelRequest` (a newer completion, a closed popup) |
+| Restart after a crash | ✔ the next request restarts a crashed server (at most three times in three minutes, then the fallback takes over and the status bar shows it crashed); its diagnostics are cleared |
+| Multiple servers per file | ✔ a feature goes to the servers whose manifest lists it, or to all of them when none does (Python: basedpyright for navigation, ruff for formatting and fixes, both for diagnostics); completion and diagnostics are merged |
+| Push and pull diagnostics | ✔ `publishDiagnostics` updates the editor through a new `LanguageService::subscribe` event (no polling); `textDocument/diagnostic` for servers that pull; the Problems view refreshes after a burst |
+| `workspace/configuration`, client-side file watching | ✔ answered from `[lsp.servers.<id>.settings]` (dotted sections); watchers registered with `client/registerCapability` (globs, relative patterns, kinds) get the project watcher's events as `didChangeWatchedFiles`; also `workspace/applyEdit`, `workspaceFolders`, refresh requests, progress, `showMessage` |
+| Document synchronization | ✔ every request carries the editor's text; the server gets `didOpen` or one incremental `didChange` (common prefix and suffix, in the negotiated UTF-16 / UTF-8 / UTF-32 encoding); `didSave`; `didClose` when a tab closes |
+| Completion with resolve, snippets and auto-import | ✔ the first ten items are resolved (documentation, `additionalTextEdits`); an import edit is merged with the insertion into one edit; snippets are inserted as text (see deviations); items replace the typed word (GPUI Kit appended `insert_text` after it) |
+| Quick Documentation, Parameter Info | ✔ hover, signature help (parameter offsets in UTF-16) |
+| Go to Declaration / Type / Implementation | ✔ new actions Go to Definition, Declaration, Type Definition, Implementation; Ctrl+click and the Ctrl-hover underline through GPUI Kit's definition provider; one target opens (with Back), several go to a list |
+| Find Usages with preview | ✔ a locations list (`locations.rs`): grouped by file, ±3 lines of context, Enter / double click opens |
+| Rename with preview (F2) | ✔ the Stage 2 dialog on `textDocument/rename`; files that are not open are now written to disk (they were skipped) |
+| Quick Fix / code actions (Ctrl+.) | ✔ code actions resolved lazily (`codeAction/resolve`) when chosen; commands run with `workspace/executeCommand`, and the edits the server applies meanwhile are applied too; edits to other files go to their editors or to disk |
+| Formatting (document / range / on typing), Optimize Imports | ✔ Format Document (the selection when there is one), Optimize Imports (`source.organizeImports`); on-typing formatting is in the service but not triggered (see deviations) |
+| Inlay hints, semantic tokens | ✔ inlay hints from the server (drawn at the end of the line, as in Stage 2); semantic tokens layered over tree-sitter through GPUI Kit's semantic-token provider, mapped to the theme's styles |
+| Document and workspace symbols | ✔ Structure, breadcrumbs and `@` from `documentSymbol`; `#` / Go to Symbol in Workspace merges `workspace/symbol` of the running servers with the tree-sitter index |
+| Call and type hierarchies | ✔ Call Hierarchy (callers) and Type Hierarchy (supertypes ↑, subtypes ↓) in the locations list |
+| Code lens, links in documents | Partial: requested and converted by the service (`code_lenses`, `document_links`), not drawn (see deviations) |
+| Problems panel, F8 / Shift+F8, linters as additional servers | ✔ panel and navigation from Stage 2, now with real diagnostics; linters run as extra servers of a pack (ruff) |
+| Live Templates and Postfix Completion | ✔ `templates.rs`: built-in templates for Rust, Python, JavaScript / TypeScript, Go, Java, C / C++ and C#, offered by completion; postfix templates wrap the expression before the dot (`x.if`, `list.for`, `value.ok`); bodies in the LSP snippet format |
+| Server installer | ✔ Code ▸ Install Language Server installs the active file's missing (or failing) servers into `<data>/servers/<id>` with npm, pip (a virtual environment), `go install`, `cargo install`, gem, `dotnet tool` or rustup; commands are looked up there first, then on `PATH`. Release archives: see deviations |
+| LSP memory manager, power save mode | ✔ governor: `[lsp] max_servers` (default 6; the least recently used server stops), `idle_minutes` (30; restarts on demand); the status bar lists the real servers (starting / ready / crashed); Power Save Mode (Code menu, `[lsp] power_save`) skips inlay hints, semantic tokens and code lens |
+| Safe mode (Stage 4 open item) | ✔ no server starts in an untrusted project; trusting it starts them, withdrawing trust stops them |
+
+New actions, bound in every keymap scheme where the editor has one (VS
+Code: F12, Ctrl+F12, Shift+F12 / Shift+Alt+F12, Shift+Alt+H, Shift+Alt+F,
+Shift+Alt+O; JetBrains: Ctrl+B, Ctrl+Alt+B, Ctrl+Shift+B, Alt+F7,
+Ctrl+Alt+H, Ctrl+H, Ctrl+Alt+L, Ctrl+Alt+O; Zed, Sublime Text, Emacs;
+macOS variants), in the Navigate and Code menus and the Command Palette:
+Go to Definition / Declaration / Type Definition / Implementation, Find
+Usages, Call Hierarchy, Type Hierarchy, Format Document, Optimize Imports,
+Install Language Server, Restart Language Servers, Power Save Mode.
+Settings: a new `[lsp]` section (`max_servers`, `idle_minutes`,
+`power_save`, `[lsp.servers.<id>]` with `enabled`, `command`, `args`,
+`settings`, `initialization_options`), in the JSON Schema and applied when
+`settings.toml` changes.
+
+**Definition of Done:**
+
+| Criterion | How it is checked | Result |
+|---|---|---|
+| Complete inner loop in Rust, Java, Python, TypeScript and Go | `crates/ferro_lsp/tests/real_servers.rs`: per language, hover, Go to Definition, completion, references, an error diagnostic and rename against the real server | TypeScript (vtsls) ✔ on Windows 11 here; rust-analyzer, basedpyright and gopls in the new CI job (not run on GitHub yet); Java (jdtls) has a test but no CI job yet (see open items) |
+| Integration tests with real servers in CI | CI job `lsp` installs rust-analyzer (rustup), basedpyright (pip), vtsls (npm) and gopls (`go install`) in the installer's layout and runs those tests with `FERRO_LSP_REQUIRE` | Job added; a GitHub runner with the servers installed instead of container images |
+
+Tests: `ferro_lsp` has unit tests (framing, URIs, UTF-16 / UTF-8 columns,
+incremental changes, snippets, templates, conversions, install plans) and
+`tests/service.rs` against an in-process fake server (`ferro_lsp::testing`,
+feature `test-support`): synchronization after edits around an emoji,
+pushed diagnostics as events, auto-import completion, lazy quick fixes and
+commands with `applyEdit`, configuration, watchers, save and close, crash
+and restart limits, safe mode, the governor, cancelled requests, power
+save. `ferro_workspace/src/tests_lsp.rs` drives the window on the fake
+server: diagnostics in the editor and the status bar, Go to Definition, the
+Find Usages list, Format Document, `didSave`, edits to a closed file
+written to disk, and an untrusted project starting its server once
+trusted.
+
+### Deviations from the plan
+
+- **Snippets have no tab stops**: GPUI Kit's editor has no snippet session,
+  so a snippet (from a server or a template) is inserted with its
+  placeholders' default text and the caret ends after it.
+- **Completion resolve is eager and limited**: GPUI Kit never asks to
+  resolve an item, so the service resolves the first ten items of each
+  answer (documentation, auto-import edits) within 800 ms.
+- **Code lens and document links are not drawn**, and **on-typing
+  formatting is not triggered**: GPUI Kit's editor cannot insert virtual
+  lines or clickable ranges and does not report which character was typed.
+  The service methods exist (`code_lenses`, `document_links`,
+  `format_on_type`, `format_on_type_triggers`) for `ferro_editor`.
+- **Hierarchies are one level deep**, in the locations list rather than an
+  expandable tree tool window.
+- **The installer does not download release archives** (clangd, jdtls,
+  lua-language-server, marksman, taplo, standalone rust-analyzer): it says
+  where to get them. Package managers verify their own downloads; there is
+  no extra checksum. A deep install folder can hit Windows' path limit with
+  pip (basedpyright bundles Node.js); `<data>/servers` is short enough.
+- **Per-server memory** is read on Linux only (`/proc`); elsewhere the
+  status bar shows the server without it.
+- **Changed server settings** apply to servers started afterwards; Restart
+  Language Servers applies them to running ones (no
+  `didChangeConfiguration` on edit).
+- **A rustup proxy without the component** looks installed: the server
+  fails to start, the failure is kept with its last stderr line, and
+  Install Language Server offers `rustup component add rust-analyzer`.
+
+### Open items
+
+- First run of the `lsp` CI job; a Java job (JDK and a jdtls download).
+- `ferro_editor`: snippet sessions, code lens, links, on-typing
+  formatting, inline hints.

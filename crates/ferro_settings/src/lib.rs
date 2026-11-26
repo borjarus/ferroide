@@ -64,6 +64,49 @@ pub struct Settings {
     pub keymap: KeymapSettings,
     pub locale: Locale,
     pub editor: EditorSettings,
+    pub lsp: LspSettings,
+}
+
+/// `[lsp]`: language servers (Stage 6).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct LspSettings {
+    /// Language servers running at once; the least recently used one stops
+    /// when another starts.
+    pub max_servers: usize,
+    /// A server unused for this many minutes stops (it restarts on demand).
+    pub idle_minutes: u64,
+    /// Power save mode: no inlay hints, semantic highlighting or code lens.
+    pub power_save: bool,
+    /// Per-server overrides by server id (`rust-analyzer`, `gopls`, …).
+    pub servers: std::collections::BTreeMap<String, LspServerSettings>,
+}
+
+impl Default for LspSettings {
+    fn default() -> Self {
+        Self {
+            max_servers: 6,
+            idle_minutes: 30,
+            power_save: false,
+            servers: Default::default(),
+        }
+    }
+}
+
+/// `[lsp.servers.<id>]`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct LspServerSettings {
+    /// `false` never starts the server.
+    pub enabled: Option<bool>,
+    /// The executable, instead of the Language Pack's.
+    pub command: Option<String>,
+    pub args: Option<Vec<String>>,
+    /// Answers to the server's `workspace/configuration` requests, e.g.
+    /// `[lsp.servers.rust-analyzer.settings.rust-analyzer.check]`.
+    pub settings: Option<serde_json::Value>,
+    /// The `initializationOptions` sent at startup.
+    pub initialization_options: Option<serde_json::Value>,
 }
 
 /// `[keymap]` in `settings.toml`.
@@ -152,6 +195,7 @@ impl Default for Settings {
             keymap: KeymapSettings::default(),
             locale: Locale::from_env(),
             editor: EditorSettings::default(),
+            lsp: LspSettings::default(),
         }
     }
 }
@@ -196,6 +240,7 @@ impl Settings {
         self.editor.font_size = self.editor.font_size.clamp(6.0, 72.0);
         self.editor.tab_limit = self.editor.tab_limit.clamp(1, 100);
         self.editor.tab_size = self.editor.tab_size.clamp(1, 16);
+        self.lsp.max_servers = self.lsp.max_servers.clamp(1, 64);
         if !themes::ALL.contains(&self.appearance.theme.as_str()) {
             self.appearance.theme = themes::FERRO_DARK.to_string();
         }
@@ -640,5 +685,37 @@ mod tests {
 
         let long = "x/".repeat(200);
         assert!(paths.layout_file(&long).file_name().unwrap().len() < 100);
+    }
+
+    #[test]
+    fn language_server_settings_read_from_toml() {
+        let settings: Settings = toml::from_str(
+            r#"
+[lsp]
+max_servers = 2
+power_save = true
+
+[lsp.servers.rust-analyzer]
+command = "/opt/ra"
+settings = { rust-analyzer = { check = { command = "clippy" } } }
+
+[lsp.servers.ruff]
+enabled = false
+"#,
+        )
+        .unwrap();
+        assert_eq!(settings.lsp.max_servers, 2);
+        assert!(settings.lsp.power_save);
+        assert_eq!(settings.lsp.idle_minutes, 30);
+        let ra = &settings.lsp.servers["rust-analyzer"];
+        assert_eq!(ra.command.as_deref(), Some("/opt/ra"));
+        assert_eq!(
+            ra.settings.as_ref().unwrap()["rust-analyzer"]["check"]["command"],
+            "clippy"
+        );
+        assert_eq!(settings.lsp.servers["ruff"].enabled, Some(false));
+        let written = toml::to_string(&settings).unwrap();
+        let again: Settings = toml::from_str(&written).unwrap();
+        assert_eq!(again.lsp, settings.lsp);
     }
 }

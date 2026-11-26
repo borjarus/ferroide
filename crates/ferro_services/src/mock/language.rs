@@ -13,9 +13,10 @@ use futures::{FutureExt as _, future::BoxFuture};
 
 use super::{Dice, MockConfig, MockProjectService, hash_str, mix, search::todo_in_line, simulate};
 use crate::{
-    CompletionItem, Diagnostic, FileEdit, HoverInfo, InlayHint, InlayHintKind, LanguageService,
-    PreviewedEdit, QuickFix, QuickFixKind, Result, Runnable, RunnableKind, Severity, SignatureHelp,
-    Symbol, SymbolKind, TextEdit, TextPos, TextRange, WorkspaceEdit, fuzzy,
+    CompletionItem, Diagnostic, FileEdit, GotoKind, HoverInfo, InlayHint, InlayHintKind,
+    LanguageService, Location, PreviewedEdit, QuickFix, QuickFixKind, Result, Runnable,
+    RunnableKind, Severity, SignatureHelp, Symbol, SymbolKind, TextEdit, TextPos, TextRange,
+    WorkspaceEdit, fuzzy,
 };
 
 pub struct MockLanguageService {
@@ -340,6 +341,7 @@ fn fix_for(d: &Diagnostic, text: &str) -> Option<QuickFix> {
         kind: QuickFixKind::QuickFix,
         edits,
         preferred: true,
+        data: None,
     };
     let edit = |range, new_text: &str| TextEdit {
         range,
@@ -1258,6 +1260,7 @@ impl LanguageService for MockLanguageService {
                     ),
                     documentation: known_hover(&s.name, lang),
                     insert_text: s.name.clone(),
+                    replace: None,
                 });
             }
         }
@@ -1283,6 +1286,7 @@ impl LanguageService for MockLanguageService {
                     detail: None,
                     documentation: None,
                     insert_text: word,
+                    replace: None,
                 });
             }
         }
@@ -1294,6 +1298,7 @@ impl LanguageService for MockLanguageService {
                     detail: Some(detail.into()),
                     documentation: Some(doc.into()),
                     insert_text: insert.into(),
+                    replace: None,
                 });
             }
         }
@@ -1305,6 +1310,7 @@ impl LanguageService for MockLanguageService {
                     detail: None,
                     documentation: None,
                     insert_text: kw.into(),
+                    replace: None,
                 });
             }
         }
@@ -1406,6 +1412,7 @@ impl LanguageService for MockLanguageService {
             kind,
             edits,
             preferred: false,
+            data: None,
         };
         if lang != Lang::Other {
             // "Add explicit type" for a binding without one on this line.
@@ -1502,6 +1509,76 @@ impl LanguageService for MockLanguageService {
         let fail = self.should_fail();
         let result = rename_now(&self.project, path, text, pos, new_name);
         self.answer(result, fail, "renaming")
+    }
+
+    /// Definitions by name from the demo project's outline.
+    fn goto(
+        &self,
+        path: &Path,
+        text: &str,
+        pos: TextPos,
+        kind: GotoKind,
+    ) -> BoxFuture<'static, Result<Vec<Location>>> {
+        let fail = self.should_fail();
+        let result = (|| {
+            if kind != GotoKind::Definition && kind != GotoKind::Declaration {
+                return Ok(Vec::new());
+            }
+            let Some((name, ..)) = word_at(text, pos) else {
+                return Ok(Vec::new());
+            };
+            let mut files: Vec<(PathBuf, String)> = vec![(path.to_path_buf(), text.to_string())];
+            let this = super::norm(path);
+            files.extend(
+                self.project
+                    .demo_files()
+                    .into_iter()
+                    .filter(|(p, _)| super::norm(p) != this),
+            );
+            let mut found = Vec::new();
+            for (file, content) in files {
+                let mut symbols = Vec::new();
+                flatten(&outline(&file, &content), &mut symbols);
+                for symbol in symbols.into_iter().filter(|s| s.name == name) {
+                    found.push(Location {
+                        line_text: content
+                            .lines()
+                            .nth(symbol.selection.line as usize)
+                            .unwrap_or_default()
+                            .to_string(),
+                        range: TextRange::new(symbol.selection, symbol.selection),
+                        path: file.clone(),
+                    });
+                }
+            }
+            Ok(found)
+        })();
+        self.answer(result, fail, "finding the definition")
+    }
+
+    /// Usages: every whole-word occurrence, as Rename would change them.
+    fn references(
+        &self,
+        path: &Path,
+        text: &str,
+        pos: TextPos,
+        _include_declaration: bool,
+    ) -> BoxFuture<'static, Result<Vec<Location>>> {
+        let fail = self.should_fail();
+        let result = rename_now(&self.project, path, text, pos, "__ferro_usage__").map(|edit| {
+            edit.files
+                .into_iter()
+                .flat_map(|file| {
+                    let path = file.path;
+                    file.edits.into_iter().map(move |e| Location {
+                        path: path.clone(),
+                        range: e.edit.range,
+                        line_text: e.line_before,
+                    })
+                })
+                .collect()
+        });
+        self.answer(result, fail, "finding usages")
     }
 }
 
@@ -1813,6 +1890,39 @@ mod tests {
         assert!(
             block(lsp.rename(&path, &text, TextPos::new(2, 0), "x")).is_err(),
             "keyword `mod`"
+        );
+    }
+
+    #[test]
+    fn definitions_and_usages_by_name() {
+        let (lsp, project) = service(0);
+        let found = block(lsp.workspace_symbols("default_retries")).unwrap();
+        let path = found[0].path.clone();
+        let text = project.file_text(&path).unwrap();
+        let (line, col) = text
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| l.find("default_retries").map(|c| (i as u32, c as u32)))
+            .expect("the file defines default_retries");
+        let pos = TextPos::new(line, col + 2);
+        let defs = block(lsp.goto(&path, &text, pos, crate::GotoKind::Definition)).unwrap();
+        assert!(!defs.is_empty());
+        assert!(
+            defs.iter()
+                .all(|d| d.line_text.contains("fn default_retries")),
+            "{defs:?}"
+        );
+        let usages = block(lsp.references(&path, &text, pos, true)).unwrap();
+        assert!(!usages.is_empty());
+        assert!(
+            usages
+                .iter()
+                .all(|u| u.line_text.contains("default_retries"))
+        );
+        assert!(
+            block(lsp.goto(&path, &text, pos, crate::GotoKind::Implementation))
+                .unwrap()
+                .is_empty()
         );
     }
 }

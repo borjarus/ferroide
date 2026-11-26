@@ -232,3 +232,16 @@ welcome-days-ago = { $days ->
 feature-coming-soon = This view is not available yet.
 tool-services = Services
 language-plain-text = Plain Text
+
+action-go-to-definition = Go to Definition
+action-go-to-declaration = Go to Declaration
+action-go-to-type-definition = Go to Type Definition
+action-go-to-implementation = Go to Implementation
+action-find-usages = Find Usages
+action-call-hierarchy = Call Hierarchy
+action-type-hierarchy = Type Hierarchy
+action-format-document = Format Document
+action-organize-imports = Optimize Imports
+action-install-language-server = Install Language Server
+action-restart-language-servers = Restart Language Servers
+action-toggle-power-save = Power Save Mode

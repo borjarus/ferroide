@@ -1900,6 +1900,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferro_lsp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "ferro_languages",
+ "ferro_lsp",
+ "ferro_services",
+ "futures",
+ "globset",
+ "lsp-types",
+ "serde",
+ "serde_json",
+ "smol",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "which",
+]
+
+[[package]]
 name = "ferro_perf"
 version = "0.1.0"
 dependencies = [
@@ -2014,6 +2035,7 @@ dependencies = [
  "ferro_i18n",
  "ferro_keymap",
  "ferro_languages",
+ "ferro_lsp",
  "ferro_project",
  "ferro_services",
  "ferro_settings",

@@ -54,3 +54,18 @@ search-fif-open-hint = Enter lub dwuklik otwiera wynik
 search-fif-replaced = Zamieniono wystąpienia ({ $count }) w otwartych plikach ({ $files }).
 search-fif-skipped = Pominięto pliki nieotwarte w edytorze ({ $skipped }): zapis plików pojawi się wraz z prawdziwą usługą projektu (etap 4).
 search-fif-nothing-replaced = Nic nie zamieniono: najpierw otwórz plik zawierający wyniki.
+
+locations-summary = { $count ->
+    [one] 1 wynik
+    [few] { $count } wyniki
+   *[other] { $count } wyników
+} w { $files ->
+    [one] 1 pliku
+   *[other] { $files } plikach
+}
+locations-open-hint = Enter otwiera · Esc zamyka
+locations-usages = Użycia { $name }
+locations-definitions = Definicje { $name }
+locations-implementations = Implementacje { $name }
+locations-callers = Wywołania { $name }
+locations-type-hierarchy = Hierarchia typów { $name }

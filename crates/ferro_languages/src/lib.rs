@@ -13,9 +13,9 @@
 //!   [`grammars`] — and cost nothing until then).
 //! - [`LanguageRegistry::resolver`]: resolves injected languages for
 //!   [`ferro_syntax::SyntaxTree`].
-//! - [`SyntaxLanguageService`]: the `LanguageService` of projects on disk
-//!   until language servers arrive (Stage 6) — outline, ▶ icons, syntax
-//!   errors, keyword and word completion, a tags-based symbol index.
+//! - [`SyntaxLanguageService`]: code intelligence without a language
+//!   server, the fallback of `ferro_lsp` — outline, ▶ icons, syntax errors,
+//!   keyword and word completion, a tags-based symbol index.
 
 pub mod detect;
 pub mod grammars;

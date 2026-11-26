@@ -62,6 +62,38 @@ jobs:
       - run: cargo nextest run --workspace --no-fail-fast
       - run: cargo test --workspace --doc
 
+  lsp:
+    # Stage 6 DoD: the inner loop against real language servers.
+    name: Language servers (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    env:
+      FERRO_LSP_INSTALL_DIR: ${{ github.workspace }}/.lsp-servers
+      FERRO_LSP_REQUIRE: rust-analyzer,basedpyright,vtsls,gopls
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99"
+          components: rust-analyzer
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the servers (FerroIDE's installer layout)
+        run: |
+          mkdir -p "$FERRO_LSP_INSTALL_DIR"
+          npm install --prefix "$FERRO_LSP_INSTALL_DIR/vtsls" --no-save @vtsls/language-server typescript
+          python -m venv "$FERRO_LSP_INSTALL_DIR/basedpyright/venv"
+          "$FERRO_LSP_INSTALL_DIR/basedpyright/venv/bin/pip" install basedpyright
+          GOBIN="$FERRO_LSP_INSTALL_DIR/gopls/bin" go install golang.org/x/tools/gopls@latest
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p ferro_lsp --test real_servers -- --ignored --test-threads 1
+
   perf:
     name: Performance spikes (${{ matrix.os }})
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

@@ -1,5 +1,6 @@
 //! Code intelligence without a language server (plan §7.3 "Fallback without
-//! LSP"): the [`LanguageService`] of a project on disk until Stage 6.
+//! LSP"): what `ferro_lsp::LspLanguageService` answers with when no server
+//! runs for a file (none installed, untrusted project, crashed for good).
 //!
 //! From the Language Packs' tree-sitter queries: the file structure, ▶ icons,
 //! syntax errors as diagnostics, completion of keywords and words of the
@@ -390,6 +391,7 @@ fn word_completions(
                 detail: None,
                 documentation: None,
                 insert_text: keyword.clone(),
+                replace: None,
             });
         }
     }
@@ -406,6 +408,7 @@ fn word_completions(
             detail: None,
             documentation: None,
             insert_text: word.to_string(),
+            replace: None,
         });
         if items.len() >= 50 {
             break;
@@ -510,6 +513,8 @@ impl LanguageService for SyntaxLanguageService {
         _: TextPos,
         _: &str,
     ) -> BoxFuture<'static, ferro_services::Result<WorkspaceEdit>> {
-        Box::pin(async { anyhow::bail!("Rename needs a language server (Stage 6)") })
+        Box::pin(async {
+            anyhow::bail!("Rename needs a language server (Code ▸ Install Language Server)")
+        })
     }
 }

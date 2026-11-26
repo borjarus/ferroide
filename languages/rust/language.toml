@@ -17,7 +17,7 @@ queries = ["highlights.scm", "injections.scm", "tags.scm", "outline.scm", "folds
 [[language_servers]]
 id = "rust-analyzer"
 command = "rust-analyzer"
-install = { github = "rust-lang/rust-analyzer" }
+install = { rustup = "rust-analyzer", github = "rust-lang/rust-analyzer" }
 features = ["completion", "hover", "definition", "references", "rename", "diagnostics", "formatting", "inlay_hints"]
 
 [debugger]

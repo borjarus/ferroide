@@ -279,38 +279,17 @@ impl RenameDialog {
                 per_file.push((file.path.clone(), chosen));
             }
         }
+        // Open files change in their editors (undoable), the others on disk.
         self.workspace
             .update(cx, |ws, cx| {
-                let mut count = (0, 0, 0);
-                for (path, edits) in &per_file {
-                    let editor = ws
-                        .editors
-                        .iter()
-                        .find(|e| e.read(cx).path() == path.as_path())
-                        .cloned();
-                    match editor.and_then(|e| e.read(cx).text(cx).map(|t| (e, t))) {
-                        Some((editor, text)) => {
-                            let new = apply_edits(&text, edits);
-                            editor.update(cx, |e, cx| e.set_text(new, window, cx));
-                            count.0 += edits.len();
-                            count.1 += 1;
-                        }
-                        None => count.2 += 1,
-                    }
-                }
-                let mut message = tr_args(
+                let (count, files) = ws.apply_workspace_edit(&per_file, false, window, cx);
+                let message = tr_args(
                     "dialogs-rename-done",
-                    &[("count", count.0.into()), ("files", count.1.into())],
+                    &[("count", count.into()), ("files", files.into())],
                 )
                 .to_string();
-                if count.2 > 0 {
-                    message.push_str(&format!(
-                        " {}",
-                        tr_args("dialogs-rename-skipped", &[("files", count.2.into())])
-                    ));
-                }
                 window.push_notification(Notification::info(message), cx);
-                count.0
+                count
             })
             .unwrap_or(0)
     }

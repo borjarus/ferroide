@@ -39,3 +39,25 @@ editor-diff-editor = Edytor
 status-line-separator-menu = Separator wierszy tego pliku
 status-encoding-reopen = Otwórz ponownie z kodowaniem
 status-encoding-save = Zapisz z kodowaniem
+
+lsp-nothing-found = Nic nie znaleziono dla { $name }
+lsp-format-nothing = Plik jest już sformatowany
+lsp-format-unavailable = Żaden serwer języka nie formatuje tego pliku
+lsp-imports-nothing = Importy są już zoptymalizowane
+lsp-edits-applied = { $count ->
+    [one] 1 zmiana
+    [few] { $count } zmiany
+   *[other] { $count } zmian
+} w { $files ->
+    [one] 1 pliku
+   *[other] { $files } plikach
+}
+lsp-edits-failed = Nie udało się zmienić { $file }: { $error }
+lsp-install-none = Serwery języka { $language } są zainstalowane albo FerroIDE nie potrafi ich zainstalować: { $hint }
+lsp-install-started = Instalowanie { $server }…
+lsp-install-done = Zainstalowano { $server }
+lsp-install-failed = Instalacja { $server } nie powiodła się: { $error }
+lsp-restarted = Serwery języka uruchomią się ponownie przy następnym żądaniu
+lsp-power-save-on = Tryb oszczędzania energii: podpowiedzi typów, podświetlanie semantyczne i code lens są wyłączone
+lsp-power-save-off = Tryb oszczędzania energii jest wyłączony
+lsp-no-file = Najpierw otwórz plik
