@@ -11,7 +11,7 @@ publish.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-rusqlite = { version = "0.42", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 ferro_services.workspace = true
 
 [dev-dependencies]
