@@ -29,6 +29,8 @@ ferro_syntax.workspace = true
 ferro_languages.workspace = true
 ferro_lsp.workspace = true
 ferro_index.workspace = true
+ferro_terminal.workspace = true
+ferro_tasks.workspace = true
 regex = "1"
 async-channel.workspace = true
 

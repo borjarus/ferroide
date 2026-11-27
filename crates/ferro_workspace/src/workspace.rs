@@ -32,7 +32,8 @@ use crate::{
     editor::{EDITOR_PANEL_NAME, EditorCommand, EditorEvent, EditorPanel, EditorTabState},
     quick_open::QuickOpenMode,
     requests::{
-        ApplyWorkspaceEdit, OpenDiff, OpenLocation, OpenMerge, RevealInProject, ShowLocations,
+        ApplyWorkspaceEdit, OpenDiff, OpenLocation, OpenMerge, RevealInProject, RunBuildTask,
+        RunRunnable, ShowLocations,
     },
     settings_window::SettingsPage,
     tool_window::{ToolWindowKind, ToolWindowPanel},
@@ -1366,6 +1367,9 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 let alive = this.update(cx, |this, cx| {
+                    if event == RunEvent::ConfigurationsChanged {
+                        this.reload_run_configs(cx);
+                    }
                     if let RunEvent::StateChanged { id, state } = event
                         && this
                             .run_configs
@@ -2089,6 +2093,25 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &Run, window, cx| this.start_run(false, window, cx)))
             .on_action(cx.listener(|this, _: &Debug, window, cx| this.start_run(true, window, cx)))
             .on_action(cx.listener(|this, _: &Stop, _, cx| this.stop_run(cx)))
+            .on_action(
+                cx.listener(|this, _: &RunAtCaret, window, cx| {
+                    this.run_at_caret(false, window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &DebugAtCaret, window, cx| {
+                    this.run_at_caret(true, window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &RerunFailedTests, window, cx| {
+                this.rerun_failed_tests(window, cx)
+            }))
+            .on_action(cx.listener(|this, request: &RunRunnable, window, cx| {
+                this.run_runnable(request, window, cx)
+            }))
+            .on_action(cx.listener(|this, request: &RunBuildTask, window, cx| {
+                this.run_build_task(request, window, cx)
+            }))
             .size_full()
             .flex()
             .flex_col()

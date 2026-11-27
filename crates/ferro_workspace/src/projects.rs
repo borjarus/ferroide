@@ -3,8 +3,10 @@
 //!
 //! A project opened from disk runs on `FsProjectService`, the persistent
 //! project index (`ferro_index::ProjectIndex`, Stage 7) and language servers (`LspLanguageService`, with the
-//! tree-sitter service as its fallback); the other services stay mocks
-//! until their stages (run: 8, VCS: 9, debugger: 10).
+//! tree-sitter service as its fallback), run configurations, build tools
+//! and tests (`ferro_tasks::TaskRunService`, Stage 8) and real shells in
+//! the terminal (`ferro_terminal`, Stage 8); VCS and the debugger stay
+//! mocks until their stages (9 and 10).
 //!
 //! **Trust.** A folder that was never trusted opens in safe mode: the
 //! workspace shows a bar offering to trust it, and run configurations and
@@ -102,6 +104,10 @@ pub fn project_services_with(
         language: language.clone(),
         search: Some(services.search.clone()),
     });
+    services.run = Arc::new(ferro_tasks::TaskRunService::new(ferro_tasks::RunOptions {
+        roots: ferro_services::ProjectService::roots(&*project),
+        ..Default::default()
+    })?);
     services.project = project;
     Ok((services, language))
 }
@@ -112,7 +118,11 @@ pub fn open_project(
     cx: &mut App,
 ) -> Result<(AnyWindowHandle, Entity<Workspace>)> {
     let index = crate::search::index_options(&roots, cx);
-    let (services, language) = project_services(roots, crate::lsp::options(cx), index)?;
+    let (mut services, language) = project_services(roots, crate::lsp::options(cx), index)?;
+    let cwd = services.project.roots()[0].clone();
+    services.terminal = Arc::new(ferro_terminal::PtyTerminalService::new(
+        crate::terminals::options(cwd, cx),
+    ));
     crate::lsp::register(&language, cx);
     let roots = services.project.roots();
     let db = AppState::global(cx).db.clone();

@@ -45,7 +45,10 @@ panels-problems-empty = Nie znaleziono problemów
 ## Terminal
 panels-terminal-close = Zamknij sesję
 panels-terminal-empty = Brak sesji terminala. Naciśnij +, aby otworzyć nową.
-panels-terminal-readonly = Podgląd tylko do odczytu: interaktywny terminal pojawi się w etapie 8.
+panels-terminal-choose-shell = Nowy terminal z…
+panels-terminal-prev-command = Poprzednie polecenie (Ctrl+Shift+Góra)
+panels-terminal-next-command = Następne polecenie (Ctrl+Shift+Dół)
+panels-terminal-exited = Proces zakończył się z kodem { $code }
 
 ## Uruchamianie
 panels-run-console = Konsola
@@ -54,6 +57,21 @@ panels-run-hide-passed = Ukryj zaliczone testy
 panels-run-no-tests = Brak wyników testów
 panels-run-select-test = Wybierz test, aby zobaczyć jego wyjście.
 panels-run-summary = zaliczone: { $passed }, niezaliczone: { $failed }, pominięte: { $ignored }
+panels-run-last-results = Ostatnie uruchomienie testów
+panels-run-filter-placeholder = Filtruj wyjście
+panels-run-follow = Przewijaj do końca przy nowym wyjściu
+panels-run-clear = Wyczyść konsolę
+panels-run-rerun = Uruchom ponownie
+panels-run-close-tab = Zamknij kartę
+panels-run-link-missing = Nie znaleziono pliku: { $path }
+
+## Narzędzia budowania
+panels-build-refresh = Wczytaj projekty ponownie
+panels-build-run = Uruchom zadanie
+panels-build-run-in-terminal = Uruchom zadanie w terminalu
+panels-build-loading = Szukanie projektów narzędzi budowania…
+panels-build-empty = Nie znaleziono projektów narzędzi budowania (Cargo, Maven, Gradle, npm, Go, CMake, .NET).
+panels-build-failed = Nie udało się odczytać projektów: { $error }
 
 ## Debugowanie
 panels-debug-resume = Wznów

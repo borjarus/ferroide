@@ -9,12 +9,15 @@ use std::{
 };
 
 use super::lock;
-use crate::{TerminalLine, TerminalService, TerminalSession, parse_ansi};
+use crate::{TerminalEvent, TerminalLine, TerminalService, TerminalSession, parse_ansi};
 
+/// Static sessions; typed input is echoed after the last prompt and Enter
+/// starts a new prompt, so the view's input path can be tried and tested.
 pub struct MockTerminalService {
     root: PathBuf,
     sessions: Mutex<Vec<TerminalSession>>,
     next_id: AtomicU64,
+    subscribers: Mutex<Vec<async_channel::Sender<TerminalEvent>>>,
 }
 
 fn prompt(root: &Path, command: &str) -> TerminalLine {
@@ -92,6 +95,7 @@ impl MockTerminalService {
                 },
             ]),
             next_id: AtomicU64::new(3),
+            subscribers: Mutex::new(Vec::new()),
             root,
         }
     }
@@ -128,6 +132,49 @@ impl TerminalService for MockTerminalService {
     fn close_session(&self, id: u64) {
         lock(&self.sessions).retain(|s| s.id != id);
     }
+
+    fn write(&self, id: u64, bytes: &[u8]) {
+        {
+            let mut sessions = lock(&self.sessions);
+            let Some(session) = sessions.iter_mut().find(|s| s.id == id) else {
+                return;
+            };
+            for c in String::from_utf8_lossy(bytes).chars() {
+                match c {
+                    '\r' | '\n' => session.lines.push(prompt(&self.root, "")),
+                    '\x7f' | '\x08' => {
+                        if let Some(line) = session.lines.last_mut()
+                            && let Some(span) = line.last_mut()
+                        {
+                            span.text.pop();
+                        }
+                    }
+                    c if !c.is_control() => {
+                        let line = session.lines.last_mut();
+                        if let Some(line) = line {
+                            match line.last_mut() {
+                                Some(span) if span.fg == crate::AnsiColor::Default => {
+                                    span.text.push(c)
+                                }
+                                _ => line.push(crate::StyledSpan {
+                                    text: c.to_string(),
+                                    ..Default::default()
+                                }),
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        lock(&self.subscribers).retain(|tx| tx.try_send(TerminalEvent::Changed(id)).is_ok());
+    }
+
+    fn subscribe(&self) -> async_channel::Receiver<TerminalEvent> {
+        let (tx, rx) = async_channel::unbounded();
+        lock(&self.subscribers).push(tx);
+        rx
+    }
 }
 
 #[cfg(test)]
@@ -159,5 +206,17 @@ mod tests {
         let again = terminal.new_session();
         assert_eq!(again.title, "Local");
         assert_ne!(again.id, new.id);
+    }
+
+    #[test]
+    fn typed_input_is_echoed_and_enter_starts_a_prompt() {
+        let terminal = MockTerminalService::new(PathBuf::from("/p/demo-app"));
+        let events = terminal.subscribe();
+        let id = terminal.new_session().id;
+        terminal.write(id, b"lsx\x7f\r");
+        let snapshot = terminal.snapshot(id).unwrap();
+        assert_eq!(snapshot.lines.len(), 2);
+        assert!(crate::line_text(&snapshot.lines[0]).ends_with("ls"));
+        assert_eq!(events.try_recv(), Ok(TerminalEvent::Changed(id)));
     }
 }

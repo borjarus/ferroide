@@ -317,6 +317,9 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     a("ferro::Run", "action-run", Run),
     a("ferro::Debug", "action-debug", Run),
     a("ferro::Stop", "action-stop", Run),
+    a("ferro::RunAtCaret", "action-run-at-caret", Run),
+    a("ferro::DebugAtCaret", "action-debug-at-caret", Run),
+    a("ferro::RerunFailedTests", "action-rerun-failed-tests", Run),
     a(
         "ferro::EditRunConfigurations",
         "action-edit-run-configurations",

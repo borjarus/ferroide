@@ -96,3 +96,22 @@ pub struct ShowLocations {
 pub struct ApplyWorkspaceEdit {
     pub files: Vec<(PathBuf, Vec<TextEdit>)>,
 }
+
+/// Run (or debug) the ▶ runnable of an editor line as a temporary run
+/// configuration.
+#[derive(Debug, Clone, PartialEq, Action)]
+#[action(namespace = ferro, no_json)]
+pub struct RunRunnable {
+    pub path: PathBuf,
+    pub runnable: ferro_services::Runnable,
+    pub debug: bool,
+}
+
+/// Run a build tool task (the Build tool window).
+#[derive(Debug, Clone, PartialEq, Action)]
+#[action(namespace = ferro, no_json)]
+pub struct RunBuildTask {
+    pub task: ferro_services::BuildTask,
+    /// In a new terminal session instead of the Run tool window.
+    pub in_terminal: bool,
+}

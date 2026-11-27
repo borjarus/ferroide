@@ -66,6 +66,35 @@ pub struct Settings {
     pub editor: EditorSettings,
     pub lsp: LspSettings,
     pub search: SearchSettings,
+    pub terminal: TerminalSettings,
+}
+
+/// `[terminal]`: the Terminal tool window (Stage 8).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TerminalSettings {
+    /// The default shell: an id (`pwsh`, `powershell`, `cmd`, `bash`,
+    /// `zsh`, `fish`, `sh`, `wsl`) or a program path. Empty is the
+    /// system's default (`$SHELL`, or PowerShell on Windows).
+    pub shell: String,
+    /// Lines kept in each session's scrollback.
+    pub scrollback: usize,
+    /// Mark command boundaries and exit codes (OSC 133) by loading a small
+    /// script into the shell, on top of the user's own configuration.
+    pub shell_integration: bool,
+    /// Extra environment variables for terminal sessions.
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+impl Default for TerminalSettings {
+    fn default() -> Self {
+        Self {
+            shell: String::new(),
+            scrollback: 10_000,
+            shell_integration: true,
+            env: Default::default(),
+        }
+    }
 }
 
 /// `[search]`: Find in Files and the project index (Stage 7).
@@ -221,6 +250,7 @@ impl Default for Settings {
             editor: EditorSettings::default(),
             lsp: LspSettings::default(),
             search: SearchSettings::default(),
+            terminal: TerminalSettings::default(),
         }
     }
 }

@@ -811,6 +811,7 @@ impl MockRunService {
                 arguments: args.into(),
                 working_directory: String::new(),
                 environment: vec![("RUST_LOG".into(), "info".into())],
+                ..Default::default()
             };
         let mut web = config(
             "web",
@@ -841,6 +842,16 @@ impl MockRunService {
                 subscribers: Vec::new(),
             })),
         }
+    }
+
+    /// Add or replace a temporary configuration.
+    fn add_temporary(&self, config: RunConfiguration) {
+        {
+            let mut configs = lock(&self.configurations);
+            configs.retain(|c| c.id != config.id);
+            configs.push(config);
+        }
+        Self::broadcast(&self.inner, RunEvent::ConfigurationsChanged);
     }
 
     fn broadcast(inner: &Mutex<RunInner>, event: RunEvent) {
@@ -950,6 +961,7 @@ impl RunService for MockRunService {
                         RunEvent::Output {
                             id: id.clone(),
                             line,
+                            error: false,
                         },
                     );
                 }
@@ -1038,6 +1050,110 @@ impl RunService for MockRunService {
                 suite("smoke", vec![prints]),
             ],
         )]
+    }
+
+    fn templates(&self) -> Vec<RunConfiguration> {
+        vec![
+            RunConfiguration {
+                id: "cargo".into(),
+                name: "Cargo".into(),
+                kind: "cargo".into(),
+                command: "cargo run".into(),
+                ..Default::default()
+            },
+            RunConfiguration {
+                id: "npm".into(),
+                name: "npm".into(),
+                kind: "npm".into(),
+                command: "npm run dev".into(),
+                working_directory: "web".into(),
+                ..Default::default()
+            },
+        ]
+    }
+
+    fn run_runnable(&self, path: &Path, runnable: &crate::Runnable, debug: bool) -> Result<String> {
+        let (name, command) = match runnable.kind {
+            crate::RunnableKind::Main => ("demo-app".to_string(), "cargo run".to_string()),
+            _ => (
+                runnable.label.clone(),
+                format!("cargo test {}", runnable.label),
+            ),
+        };
+        let _ = path;
+        let id = format!("temp:{name}");
+        self.add_temporary(RunConfiguration {
+            id: id.clone(),
+            name,
+            kind: "cargo".into(),
+            command,
+            temporary: true,
+            ..Default::default()
+        });
+        self.start(&id, debug)?;
+        Ok(id)
+    }
+
+    fn build_projects(&self) -> BoxFuture<'static, Result<Vec<crate::BuildProject>>> {
+        let root = self.root.clone();
+        async move {
+            let task = |name: &str, command: &str, dir: &Path, is_test: bool| crate::BuildTask {
+                name: name.into(),
+                description: String::new(),
+                command: command.into(),
+                working_directory: dir.to_path_buf(),
+                is_test,
+            };
+            let web = root.join("web");
+            Ok(vec![
+                crate::BuildProject {
+                    tool: "cargo".into(),
+                    name: "demo-app".into(),
+                    manifest: root.join("Cargo.toml"),
+                    tasks: vec![
+                        task("build", "cargo build", &root, false),
+                        task("check", "cargo check", &root, false),
+                        task("test", "cargo test", &root, true),
+                        task("clippy", "cargo clippy", &root, false),
+                        task("run", "cargo run", &root, false),
+                    ],
+                },
+                crate::BuildProject {
+                    tool: "npm".into(),
+                    name: "web".into(),
+                    manifest: web.join("package.json"),
+                    tasks: vec![
+                        task("dev", "npm run dev", &web, false),
+                        task("build", "npm run build", &web, false),
+                        task("test", "npm run test", &web, true),
+                    ],
+                },
+            ])
+        }
+        .boxed()
+    }
+
+    fn run_task(&self, task: &crate::BuildTask) -> Result<String> {
+        let id = format!("task:{}", task.command);
+        self.add_temporary(RunConfiguration {
+            id: id.clone(),
+            name: task.command.clone(),
+            kind: task.command.split(' ').next().unwrap_or_default().into(),
+            command: task.command.clone(),
+            temporary: true,
+            ..Default::default()
+        });
+        self.start(&id, false)?;
+        Ok(id)
+    }
+
+    fn rerun_failed(&self, id: &str) -> Result<String> {
+        self.start(id, false)?;
+        Ok(id.to_string())
+    }
+
+    fn working_directory(&self, _id: &str) -> Option<PathBuf> {
+        Some(self.root.clone())
     }
 
     fn services(&self) -> Vec<ServiceNode> {

@@ -43,7 +43,10 @@ panels-problems-empty = No problems found
 ## Terminal
 panels-terminal-close = Close session
 panels-terminal-empty = No terminal sessions. Press + to open one.
-panels-terminal-readonly = Read-only preview: the interactive terminal arrives in Stage 8.
+panels-terminal-choose-shell = New terminal with…
+panels-terminal-prev-command = Previous command (Ctrl+Shift+Up)
+panels-terminal-next-command = Next command (Ctrl+Shift+Down)
+panels-terminal-exited = Process exited with code { $code }
 
 ## Run
 panels-run-console = Console
@@ -52,6 +55,21 @@ panels-run-hide-passed = Hide passed tests
 panels-run-no-tests = No test results yet
 panels-run-select-test = Select a test to see its output.
 panels-run-summary = { $passed } passed, { $failed } failed, { $ignored } ignored
+panels-run-last-results = Last test run
+panels-run-filter-placeholder = Filter output
+panels-run-follow = Scroll to the end on new output
+panels-run-clear = Clear console
+panels-run-rerun = Rerun
+panels-run-close-tab = Close tab
+panels-run-link-missing = File not found: { $path }
+
+## Build tools
+panels-build-refresh = Reload projects
+panels-build-run = Run task
+panels-build-run-in-terminal = Run task in terminal
+panels-build-loading = Looking for build tool projects…
+panels-build-empty = No build tool projects found (Cargo, Maven, Gradle, npm, Go, CMake, .NET).
+panels-build-failed = Could not read the projects: { $error }
 
 ## Debug
 panels-debug-resume = Resume

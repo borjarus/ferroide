@@ -18,6 +18,7 @@ use futures::future::BoxFuture;
 pub mod debug;
 pub mod fuzzy;
 pub mod language;
+pub mod links;
 pub mod mock;
 pub mod search;
 pub mod terminal;
@@ -261,6 +262,33 @@ pub struct RunConfiguration {
     /// Relative to the project root; empty is the root.
     pub working_directory: String,
     pub environment: Vec<(String, String)>,
+    /// A `.env` file (relative to the project root) read before
+    /// `environment`, which overrides it. Empty is none.
+    pub env_file: String,
+    /// Ids of configurations run first, one after another; the launch is
+    /// abandoned when one of them fails.
+    pub before_launch: Vec<String>,
+    /// A compound configuration: ids of the configurations it starts
+    /// together. `command` is unused when this is not empty.
+    pub compound: Vec<String>,
+    /// Created by a ▶ icon or a build tool task: listed, but not stored in
+    /// `.ferroide/run/` until saved from the editor.
+    pub temporary: bool,
+}
+
+impl RunConfiguration {
+    pub fn is_compound(&self) -> bool {
+        !self.compound.is_empty()
+    }
+
+    /// The command line: `command` followed by `arguments`.
+    pub fn command_line(&self) -> String {
+        if self.arguments.trim().is_empty() {
+            self.command.clone()
+        } else {
+            format!("{} {}", self.command, self.arguments)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -322,8 +350,50 @@ pub enum RunState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunEvent {
-    StateChanged { id: String, state: RunState },
-    Output { id: String, line: String },
+    StateChanged {
+        id: String,
+        state: RunState,
+    },
+    /// A line of output, with its ANSI escape sequences; `error` when it
+    /// came from stderr.
+    Output {
+        id: String,
+        line: String,
+        error: bool,
+    },
+    /// The test tree of run `id` changed ([`RunService::test_results_for`]).
+    Tests {
+        id: String,
+    },
+    /// Configurations were added, removed or edited (also on disk).
+    ConfigurationsChanged,
+}
+
+/// A task of a build tool (the Cargo / Maven / Gradle / npm … tool window).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BuildTask {
+    /// e.g. `build`, `test`, `dev` (an npm script), `run --bin server`.
+    pub name: String,
+    /// The npm script's body, a lifecycle phase's description, …
+    pub description: String,
+    /// The full command line, e.g. `cargo build -p core`.
+    pub command: String,
+    pub working_directory: PathBuf,
+    /// Runs tests: results go to the test tree.
+    pub is_test: bool,
+}
+
+/// A project of a build tool: one manifest and its tasks.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BuildProject {
+    /// `cargo`, `maven`, `gradle`, `npm`, `pnpm`, `yarn`, `go`, `cmake`,
+    /// `dotnet`.
+    pub tool: String,
+    /// The package / module name, or the folder name.
+    pub name: String,
+    /// `Cargo.toml`, `pom.xml`, `package.json`, …
+    pub manifest: PathBuf,
+    pub tasks: Vec<BuildTask>,
 }
 
 pub trait RunService: Send + Sync + 'static {
@@ -332,13 +402,50 @@ pub trait RunService: Send + Sync + 'static {
     fn start(&self, id: &str, debug: bool) -> Result<()>;
     fn stop(&self, id: &str);
     fn subscribe(&self) -> async_channel::Receiver<RunEvent>;
-    /// Add or replace (by id) a run configuration.
+    /// Add or replace (by id) a run configuration. Saving a temporary one
+    /// makes it permanent.
     fn save_configuration(&self, config: RunConfiguration) -> Result<()>;
     fn delete_configuration(&self, id: &str);
     /// Results of the last test run, as a tree of suites.
     fn test_results(&self) -> Vec<TestNode>;
+    /// The test tree of run configuration `id` (live while it runs).
+    fn test_results_for(&self, id: &str) -> Vec<TestNode> {
+        let _ = id;
+        self.test_results()
+    }
     /// The Services tool window tree.
     fn services(&self) -> Vec<ServiceNode>;
+    /// Starting points for a new configuration in the editor, one per build
+    /// tool and language found in the project.
+    fn templates(&self) -> Vec<RunConfiguration> {
+        Vec::new()
+    }
+    /// Run (or debug) the ▶ runnable at `runnable.line` of `path` as a
+    /// temporary configuration; returns its id.
+    fn run_runnable(&self, path: &Path, runnable: &Runnable, debug: bool) -> Result<String> {
+        let _ = (path, runnable, debug);
+        anyhow::bail!("running from the editor is not supported here")
+    }
+    /// Run the failed tests of `id`'s last run again; returns the id of
+    /// the run that does it.
+    fn rerun_failed(&self, id: &str) -> Result<String> {
+        let _ = id;
+        anyhow::bail!("rerunning failed tests is not supported here")
+    }
+    /// Build tool projects found in the project, with their tasks.
+    fn build_projects(&self) -> BoxFuture<'static, Result<Vec<BuildProject>>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    /// Run a build tool task as a temporary configuration; returns its id.
+    fn run_task(&self, task: &BuildTask) -> Result<String> {
+        let _ = task;
+        anyhow::bail!("build tool tasks are not supported here")
+    }
+    /// Where `id` runs, for resolving relative paths in its output.
+    fn working_directory(&self, id: &str) -> Option<PathBuf> {
+        let _ = id;
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------

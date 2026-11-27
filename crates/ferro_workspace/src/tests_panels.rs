@@ -367,7 +367,7 @@ fn terminal_renders_sessions_with_ansi_colors(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn run_tool_window_summarizes_and_filters_tests(cx: &mut TestAppContext) {
-    let (window, view, _) = open_view(cx, MockConfig::instant(), |s, _, cx| RunView::new(s, cx));
+    let (window, view, _) = open_view(cx, MockConfig::instant(), RunView::new);
     assert_eq!(cx.read(|cx| view.read(cx).summary()), (2, 1, 1));
     let all = cx.read(|cx| view.read(cx).row_count());
     assert_eq!(all, 7);

@@ -1,0 +1,29 @@
+[package]
+name = "ferro_terminal"
+description = "Terminal sessions for FerroIDE: PTY, emulation (alacritty_terminal) and shell integration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-channel.workspace = true
+tracing.workspace = true
+alacritty_terminal = { version = "0.26.0", default-features = false }
+ferro_services.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+polling = "3.8"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", default-features = false, features = ["std", "event", "process", "termios"] }
+
+[dev-dependencies]
+tempfile = "3"
+smol.workspace = true
+
+[lints]
+workspace = true

@@ -22,8 +22,10 @@ pub mod panels;
 pub mod projects;
 pub mod quick_open;
 pub mod requests;
+mod running;
 pub mod search;
 pub mod settings_window;
+pub mod terminals;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -36,6 +38,8 @@ mod tests_lsp;
 mod tests_panels;
 #[cfg(test)]
 mod tests_projects;
+#[cfg(test)]
+mod tests_run;
 #[cfg(test)]
 mod tests_search;
 #[cfg(test)]
@@ -123,4 +127,10 @@ pub fn open_workspace(
         window.set_window_title(&format!("{} — FerroIDE", services.project.name()));
         Workspace::build(services, window, cx)
     })
+}
+
+/// Show a warning notification in `window`.
+pub(crate) fn notify_warning(window: &mut gpui_kit::Window, cx: &mut App, message: String) {
+    use gpui_kit::component::{WindowExt as _, notification::Notification};
+    window.push_notification(Notification::warning(message), cx);
 }

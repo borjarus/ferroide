@@ -483,9 +483,19 @@ impl EditorPanel {
                         .xsmall()
                         .icon(Icon::from(FerroIcon::Run).text_color(success))
                         .tooltip(tooltip)
-                        .dropdown_menu(|menu, _, _| {
-                            menu.menu(tr("action-run"), Box::new(actions::Run))
-                                .menu(tr("action-debug"), Box::new(actions::Debug))
+                        .dropdown_menu({
+                            let (path, runnable) = (self.path.clone(), runnable.clone());
+                            move |menu, _, _| {
+                                let request = |debug| {
+                                    Box::new(crate::requests::RunRunnable {
+                                        path: path.clone(),
+                                        runnable: runnable.clone(),
+                                        debug,
+                                    })
+                                };
+                                menu.menu(tr("action-run"), request(false))
+                                    .menu(tr("action-debug"), request(true))
+                            }
                         }),
                 );
             }

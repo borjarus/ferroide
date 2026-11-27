@@ -33,15 +33,24 @@ pub enum RunField {
     Command,
     Arguments,
     WorkingDirectory,
+    /// A `.env` file read before the environment variables.
+    EnvFile,
+    /// Ids of configurations run first, comma-separated.
+    BeforeLaunch,
+    /// Ids of configurations a compound one starts, comma-separated.
+    Compound,
 }
 
 impl RunField {
-    const ALL: [RunField; 5] = [
+    const ALL: [RunField; 8] = [
         RunField::Name,
         RunField::Kind,
         RunField::Command,
         RunField::Arguments,
         RunField::WorkingDirectory,
+        RunField::EnvFile,
+        RunField::BeforeLaunch,
+        RunField::Compound,
     ];
 
     fn label_key(self) -> &'static str {
@@ -51,16 +60,22 @@ impl RunField {
             RunField::Command => "dialogs-run-command",
             RunField::Arguments => "dialogs-run-arguments",
             RunField::WorkingDirectory => "dialogs-run-working-directory",
+            RunField::EnvFile => "dialogs-run-env-file",
+            RunField::BeforeLaunch => "dialogs-run-before-launch",
+            RunField::Compound => "dialogs-run-compound",
         }
     }
 
-    fn get(self, c: &RunConfiguration) -> &str {
+    fn get(self, c: &RunConfiguration) -> String {
         match self {
-            RunField::Name => &c.name,
-            RunField::Kind => &c.kind,
-            RunField::Command => &c.command,
-            RunField::Arguments => &c.arguments,
-            RunField::WorkingDirectory => &c.working_directory,
+            RunField::Name => c.name.clone(),
+            RunField::Kind => c.kind.clone(),
+            RunField::Command => c.command.clone(),
+            RunField::Arguments => c.arguments.clone(),
+            RunField::WorkingDirectory => c.working_directory.clone(),
+            RunField::EnvFile => c.env_file.clone(),
+            RunField::BeforeLaunch => c.before_launch.join(", "),
+            RunField::Compound => c.compound.join(", "),
         }
     }
 
@@ -71,14 +86,29 @@ impl RunField {
             RunField::Command => c.command = value,
             RunField::Arguments => c.arguments = value,
             RunField::WorkingDirectory => c.working_directory = value,
+            RunField::EnvFile => c.env_file = value,
+            RunField::BeforeLaunch => c.before_launch = split_ids(&value),
+            RunField::Compound => c.compound = split_ids(&value),
         }
     }
+}
+
+/// `a, b c` → `["a", "b", "c"]`.
+fn split_ids(text: &str) -> Vec<String> {
+    text.split([',', ' '])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 pub struct RunConfigDialog {
     workspace: WeakEntity<Workspace>,
     services: Services,
     configs: Vec<RunConfiguration>,
+    /// The configurations as they were when the dialog opened: temporary
+    /// ones are saved only when edited.
+    originals: Vec<RunConfiguration>,
     deleted: Vec<String>,
     selected: Option<usize>,
     fields: Vec<(RunField, Entity<InputState>)>,
@@ -105,6 +135,7 @@ impl RunConfigDialog {
             workspace,
             services,
             selected: None,
+            originals: configs.clone(),
             configs,
             deleted: Vec::new(),
             fields,
@@ -160,7 +191,7 @@ impl RunConfigDialog {
         };
         self.selected = Some(ix);
         for (field, input) in &self.fields {
-            let value = field.get(&config).to_string();
+            let value = field.get(&config);
             input.update(cx, |i, cx| i.set_value(value, window, cx));
         }
         self.environment = config
@@ -201,11 +232,16 @@ impl RunConfigDialog {
 
     pub fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_inputs(cx);
+        // Start from the project's first template (its build tool).
+        let template = self.services.run.templates().into_iter().next();
         let config = RunConfiguration {
             id: self.unique_id("config"),
             name: tr("dialogs-run-unnamed").to_string(),
-            kind: "cargo".into(),
-            command: "cargo run".into(),
+            kind: template.as_ref().map_or("cargo".into(), |t| t.kind.clone()),
+            command: template
+                .as_ref()
+                .map_or("cargo run".into(), |t| t.command.clone()),
+            working_directory: template.map(|t| t.working_directory).unwrap_or_default(),
             ..Default::default()
         };
         self.configs.push(config);
@@ -259,12 +295,9 @@ impl RunConfigDialog {
     /// whether it succeeded.
     pub fn apply(&mut self, cx: &mut Context<Self>) -> bool {
         self.commit_inputs(cx);
-        if let Some((ix, config)) = self
-            .configs
-            .iter()
-            .enumerate()
-            .find(|(_, c)| c.name.trim().is_empty() || c.command.trim().is_empty())
-        {
+        if let Some((ix, config)) = self.configs.iter().enumerate().find(|(_, c)| {
+            c.name.trim().is_empty() || (c.command.trim().is_empty() && !c.is_compound())
+        }) {
             let key = if config.name.trim().is_empty() {
                 "dialogs-run-error-name"
             } else {
@@ -279,7 +312,14 @@ impl RunConfigDialog {
             self.services.run.delete_configuration(&id);
         }
         for config in &self.configs {
-            if let Err(err) = self.services.run.save_configuration(config.clone()) {
+            if config.temporary && self.originals.contains(config) {
+                continue;
+            }
+            let config = RunConfiguration {
+                temporary: false,
+                ..config.clone()
+            };
+            if let Err(err) = self.services.run.save_configuration(config) {
                 self.error = Some(err.to_string().into());
                 cx.notify();
                 return false;

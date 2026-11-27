@@ -1,0 +1,30 @@
+[package]
+name = "ferro_tasks"
+description = "Run configurations, process running, build tool tasks and the test runner for FerroIDE"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+async-channel.workspace = true
+serde.workspace = true
+# Scripts keep the order of package.json.
+serde_json = { workspace = true, features = ["preserve_order"] }
+toml.workspace = true
+tracing.workspace = true
+regex = "1"
+ignore = "0.4"
+quick-xml = "0.41"
+tempfile = "3"
+ferro_services.workspace = true
+
+[dev-dependencies]
+smol.workspace = true
+
+[lints]
+workspace = true

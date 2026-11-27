@@ -4,6 +4,7 @@
 //! workspace's services. Views ask the workspace for things (open a file at
 //! a line, show a diff) by dispatching the actions in [`crate::requests`].
 
+pub mod build_tools;
 pub mod common;
 pub mod debug;
 pub mod notifications;
@@ -13,6 +14,7 @@ pub mod run;
 pub mod services;
 pub mod structure;
 pub mod terminal;
+pub mod terminal_input;
 pub mod todo;
 
 use ferro_services::Services;
@@ -61,6 +63,7 @@ impl ToolWindowBody {
             .or_else(|| of::<todo::TodoView>(v, cx))
             .or_else(|| of::<notifications::NotificationsView>(v, cx))
             .or_else(|| of::<services::ServicesView>(v, cx))
+            .or_else(|| of::<build_tools::BuildToolsView>(v, cx))
     }
 }
 
@@ -72,7 +75,7 @@ pub fn build(
 ) -> ToolWindowBody {
     ToolWindowBody(match kind {
         ToolWindowKind::Project => cx.new(|cx| project::ProjectTree::new(services, cx)).into(),
-        ToolWindowKind::Run => run::build(services, cx),
+        ToolWindowKind::Run => run::build(services, window, cx),
         ToolWindowKind::Debug => debug::build(services, window, cx),
         ToolWindowKind::Problems => problems::build(services, window, cx),
         ToolWindowKind::Terminal => terminal::build(services, window, cx),
@@ -82,7 +85,8 @@ pub fn build(
         ToolWindowKind::Services => self::services::build(services, window, cx),
         ToolWindowKind::Commit => crate::vcs::commit::build(services, window, cx),
         ToolWindowKind::Git => crate::vcs::git_log::build(services, window, cx),
-        ToolWindowKind::Database | ToolWindowKind::Build => static_panel(kind, cx),
+        ToolWindowKind::Build => build_tools::build(services, window, cx),
+        ToolWindowKind::Database => static_panel(kind, cx),
     })
 }
 

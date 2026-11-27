@@ -511,3 +511,93 @@ settings in the Command Palette.
   scanning, and both budgets on the weak profile and on Linux/macOS.
 - Release builds on this machine run out of memory with full parallelism
   (`cargo build -j 2` works); the benchmark was built without LTO.
+
+## Stage 8 — Terminal, running and testing
+
+Two new GUI-free crates replace the last mocks on the run path:
+`ferro_terminal` (a PTY and terminal emulator behind `TerminalService`) and
+`ferro_tasks` (run configurations, processes, build tools and test runners
+behind `RunService`). A project opened from disk now runs on both; `--demo`
+keeps the mocks, which learned the new contract (typed input is echoed,
+build tool projects, ▶ runs, rerun failed). Both contracts were extended:
+`TerminalSnapshot`, `TerminalEvent`, `NewTerminal`, `ShellInfo`,
+`CommandBlock`, full SGR styles (`StyledSpan` with background, italic,
+underline, dim, inverse; 256 and true colors); `RunConfiguration` with
+`env_file`, `before_launch`, `compound` and `temporary`; `RunEvent::Tests`
+and `ConfigurationsChanged`; `BuildProject` / `BuildTask`; and
+`run_runnable`, `rerun_failed`, `build_projects`, `run_task`, `templates`,
+`test_results_for`, `working_directory`. `ferro_services::links` finds file
+locations in output lines.
+
+| Plan item | Delivered |
+|---|---|
+| `ferro_terminal`: `alacritty_terminal` + GPUI renderer | ✔ one I/O thread per session owns alacritty's PTY (ConPTY on Windows with `polling`; `rustix::poll` on Unix) and feeds `vte` + `Term`; the view draws snapshots of the visible screen (theme colors, cursor shapes, selection, wide characters) and reports its size in cells. An output flood produces one redraw (a per-session dirty flag) |
+| Multiple tabs | ✔ "Local", "Local (2)" … (lowest free number); an exited shell keeps its output with a badge; closing kills the process |
+| Shell selection (bash, zsh, fish, PowerShell, cmd) | ✔ detected shells (pwsh, Windows PowerShell, cmd, Git Bash, WSL; `$SHELL`, bash, zsh, fish, sh) in the ▾ next to +; `[terminal] shell` sets the default |
+| Clickable file paths | ✔ Ctrl+click opens the location under the pointer (`links`: compiler output, Rust, Python, Java/Kotlin frames, JS/TS, Go, C#/MSBuild, tsc, gcc/clang) |
+| Shell integration (OSC 133: command boundaries, exit codes) | ✔ scripts loaded on top of the user's own configuration (bash `--rcfile`, zsh `ZDOTDIR`, fish `--init-command`, PowerShell 7/5.1, cmd `PROMPT`); a scanner robust to chunk boundaries records marks at absolute lines that survive scrolling and the scrollback limit. Green/red markers per command, Ctrl+Shift+↑/↓ jumps between commands |
+| Input | ✔ xterm encoding of keys with modifiers, application cursor mode, AltGr characters, bracketed paste; Ctrl+Shift+C/V (Ctrl+C copies when there is a selection, Ctrl+V pastes on Windows); Shift+PageUp/PageDown and the wheel scroll the history (arrow keys on the alternate screen); double click selects a word |
+| `ferro_tasks`: Run Configurations in `.ferroide/run/` (TOML, committable) | ✔ one file per configuration, written atomically, re-read when the folder changes (also edits made outside); malformed files are skipped with a warning. Temporary configurations (▶, build tasks, reruns) are kept in memory, the five most recent; editing one in the Run Configuration editor saves it |
+| Templates per language and build tool | ✔ `templates()` feeds Add in the editor; without saved configurations the selector lists defaults from the build tools found |
+| Environment variables, `.env` files | ✔ inherited → forced colors (`CARGO_TERM_COLOR`, `FORCE_COLOR`, …) → `env_file` (comments, `export`, quotes, `${VAR}`, `${VAR:-default}`, multi-line values) → `environment` |
+| "Before launch" tasks, compound configurations | ✔ before-launch steps run one after another in the launching configuration's console and a failure abandons the launch; a compound starts its members, runs until all end and stops them together. Both are fields of the editor, with `.env` |
+| Build tools: Cargo, Maven, Gradle, npm/pnpm/yarn, Go, CMake, dotnet | ✔ new **Build** tool window: projects found under the roots (respecting `.gitignore`) with their tasks — Cargo workspaces and members (build, check, test, clippy, doc, fmt, bench, run per binary), package.json scripts in file order (the lockfile picks npm/pnpm/yarn/bun), Maven phases and Gradle tasks (wrappers preferred), Go, CMake with presets, dotnet per project. Double click / Enter runs a task in the Run tool window; a button runs it in a new terminal |
+| Test runner: result tree, navigation to a test, rerun failed, ▶ icons | ✔ cargo test and nextest (live), go test `-json` (live, shown as text), pytest (JUnit XML), Jest / Vitest (JSON), Maven Surefire / Gradle (JUnit XML), dotnet (TRX); locations from the report or found in the sources. ▶ in the gutter runs or debugs that test / `main` as a temporary configuration (Rust, Python, Go, JS/TS, Java/Kotlin, C#); **Run / Debug Test or Main at Caret** and **Rerun Failed Tests** |
+| Console: ANSI colors, clickable stack traces, filtering and search | ✔ the Run tool window has a tab per run (a rerun reuses it), each with its console (colors, stderr in red, links, filter, follow, clear; 50k lines kept) and its live test tree; Rerun, Stop and Rerun Failed in its toolbar |
+| Trust | ✔ ▶ runs, build tasks and reruns are refused in an untrusted project, like the run selector |
+
+New actions, in the Run menu and the Command Palette: Run / Debug Test or
+Main at Caret (VS Code Ctrl+; C / Ctrl+; Ctrl+C, JetBrains Ctrl+Shift+F10 /
+Ctrl+Shift+F9, macOS Ctrl+Shift+R / Ctrl+Shift+D) and Rerun Failed Tests
+(VS Code Ctrl+; E). Settings: a new `[terminal]` section (`shell`,
+`scrollback`, `shell_integration`, `env`).
+
+**Definition of Done — milestone M3 "Alpha" (daily work in Rust, Java,
+Python, TypeScript and Go without leaving the IDE):**
+
+| Criterion | How it is checked | Result |
+|---|---|---|
+| Terminal with real shells | `ferro_terminal` PTY tests start cmd, pwsh and Git Bash: echo, exit codes through OSC 133 (5 from pwsh, 4 from Git Bash), resize, `exit 7` → `Exited(7)`, typed commands, close and drop kill the shell; `tests_run.rs` drives the Terminal view on a real shell | ✔ Windows 11 here (four runs without flakes); the Unix path passes clippy for `x86_64-unknown-linux-gnu` but has not run |
+| Running and testing Rust | `ferro_tasks/tests/run.rs`: real `cargo test` on a temp crate → a passing and a failing test at their lines, Rerun Failed runs only the failed one; `tests_run.rs`: ▶ on a test in a real Cargo project fills the Run tool window's test tree | ✔ |
+| Processes | exit codes, stdout/stderr, `env_file`, a missing program, stop killing a child tree (heartbeat file), failing before-launch, compound | ✔ Windows |
+| Java, Python, TypeScript, Go | parsers and command shapes unit-tested on realistic outputs (Surefire/Gradle JUnit XML, pytest xunit1, Jest/Vitest JSON, `go test -json`, TRX) | Partial: those toolchains are not installed here, so nothing ran for real (see open items) |
+
+Tests: `ferro_terminal` 24 unit tests (OSC 133 split at every byte,
+colors, wide characters, scrollback and marks, alternate screen,
+synchronized updates, replies to device queries) + 7 PTY tests;
+`ferro_services::links` for every format; `ferro_tasks` 47 unit + 6
+integration tests; `ferro_workspace`: key encoding, link splitting, the
+nearest runnable, and `tests_run.rs` in the window (run tabs, console and
+filter, ▶ and the run selector, Build tool window, Run at Caret, terminal
+input, paste and selection on the mock and on a real shell, cargo end to
+end).
+
+### Deviations from the plan
+
+- **The terminal view draws rows of styled text**, not a custom GPU grid
+  element; it still has to be measured against the frame budget on the
+  weak profile.
+- **Selection copies what is on screen**: a selection reaching into
+  scrolled-off history is cut to the visible part.
+- **No IME composition in the terminal** (no GPUI input handler yet);
+  typed characters, AltGr and dead keys arrive as key characters.
+- **cmd reports no exit codes** through shell integration; ConPTY on older
+  Windows 10 builds may drop OSC 133, and then no markers are shown.
+- **Runs have no stdin**, and a partial line without a newline appears
+  once it ends.
+- **Test locations are filled in when a run ends**; Maven, Gradle, pytest,
+  Jest/Vitest and dotnet results appear at the end (report files); CMake
+  has no test tree.
+- **Build tool task lists are conventional** (Maven phases, common Gradle
+  tasks) rather than asked from Maven or Gradle; Gradle subprojects are
+  not separate entries; projects are discovered when the tool window opens
+  (Reload refreshes them).
+- **Debug runs normally** until the debugger (Stage 10).
+
+### Open items
+
+- Real runs of Java (Maven/Gradle), Python (pytest), TypeScript
+  (Jest/Vitest) and Go tests, and the PTY tests on Linux/macOS: a CI job
+  with those toolchains.
+- Code signing in CI (plan §10.3) is not set up yet.
+- A GPU grid element and IME input for the terminal.
